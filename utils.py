@@ -753,6 +753,26 @@ _SEKTOR_POZITIF = _SEKTOR_INSAAT_UNVAN | {
     "enerji",
     "kimya",
     "mobilya",
+    "yazilim",
+    "bilisim",
+    "teknoloji",
+    "reklam",
+    "reklamcilik",
+    "matbaa",
+    "ajans",
+    "kargo",
+    "tasimacilik",
+    "hafriyat",
+    "mermer",
+    "ambalaj",
+    "paketleme",
+    "medikal",
+    "tibbi",
+    "temizlik",
+    "guvenlik",
+    "ahsap",
+    "makine",
+    "makina",
     "construction",
     "engineering",
 }
@@ -775,11 +795,18 @@ _SEKTOR_AILELER = (
         "emlak",
         "restorasyon",
         "hafriyat",
+        "mermer",
     },
     {"lojistik", "nakliye", "nakliyat", "kargo", "tasimacilik"},
     {"gida", "food"},
     {"tekstil", "textile"},
     {"otomotiv", "automotive"},
+    {"yazilim", "bilisim", "teknoloji", "software"},
+    {"reklam", "reklamcilik", "matbaa", "ajans"},
+    {"ambalaj", "paketleme"},
+    {"medikal", "tibbi"},
+    {"makine", "makina", "mekanik"},
+    {"mobilya", "ahsap"},
 )
 
 # Domain eki: soyad + faaliyet (basogluoto, serefnakliyat, kadioglureklam).
@@ -789,7 +816,7 @@ _EKI_LOJISTIK = frozenset(_SEKTOR_AILELER[1])
 _EKI_GIDA = frozenset(_SEKTOR_AILELER[2])
 _EKI_TEKSTIL = frozenset(_SEKTOR_AILELER[3])
 _EKI_OTOMOTIV = frozenset(_SEKTOR_AILELER[4] | {"oto", "auto"})
-_EKI_REKLAM = frozenset({"reklam", "reklamcilik", "matbaa", "ajans"})
+_EKI_REKLAM = frozenset(_SEKTOR_AILELER[6])
 
 _SEKTOR_EKI_GRUPLAR = (
     _EKI_INSAAT,

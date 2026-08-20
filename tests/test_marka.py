@@ -86,3 +86,41 @@ def test_arama_sorgusu_ilce():
     assert arama_sorgusu("ENSAR MİMARLIK LTD", ilce="Kadıköy") == (
         "ENSAR MİMARLIK resmi site Kadıköy"
     )
+
+
+def test_faaliyet_yazilim_bilisim_teknoloji():
+    """Yazılım marka tokenı değil; Google sorgusuna faaliyet olarak girer."""
+    unvan = "KORKMAZ YAZILIM TİCARET LİMİTED ŞİRKETİ"
+    assert "yazilim" not in marka_tokenlari(unvan)
+    assert unvan_faaliyet_kelimeleri(unvan) == ["YAZILIM"]
+    assert arama_sorgusu(unvan, ilce="Küçükçekmece") == (
+        "KORKMAZ YAZILIM resmi site Küçükçekmece"
+    )
+    assert arama_sorgusu("HAMKO TEKNOLOJİ SAVUNMA SANAYİ LTD") == (
+        "HAMKO SAVUNMA TEKNOLOJİ resmi site"
+    )
+    assert arama_sorgusu("ATA BİLİŞİM LTD") == "ATA BİLİŞİM resmi site"
+
+
+def test_faaliyet_reklam_kargo_makine():
+    """GENEL'de atılan faaliyetler sorguya geri konur; ticaret/ltd girmez."""
+    assert unvan_faaliyet_kelimeleri("KADIOĞLU REKLAM MATBAA LTD") == [
+        "REKLAM",
+        "MATBAA",
+    ]
+    assert arama_sorgusu("KADIOĞLU REKLAM AJANS LTD") == (
+        "KADIOĞLU REKLAM AJANS resmi site"
+    )
+    assert arama_sorgusu("ŞEREF KARGO TAŞIMACILIK LTD") == (
+        "ŞEREF KARGO TAŞIMACILIK resmi site"
+    )
+    assert arama_sorgusu("BAŞOĞLU İNŞAAT HAFRİYAT LTD") == (
+        "BAŞOĞLU İNŞAAT HAFRİYAT resmi site"
+    )
+    assert arama_sorgusu("AYDIN MERMER LTD") == "AYDIN MERMER resmi site"
+    assert arama_sorgusu("POLAT AMBALAJ LTD") == "POLAT AMBALAJ resmi site"
+    assert arama_sorgusu("YILMAZ MEDİKAL LTD") == "YILMAZ MEDİKAL resmi site"
+    assert arama_sorgusu("STAR TEMİZLİK LTD") == "STAR TEMİZLİK resmi site"
+    assert arama_sorgusu("STAR GÜVENLİK LTD") == "STAR GÜVENLİK resmi site"
+    assert arama_sorgusu("ORHAN AHŞAP LTD") == "ORHAN AHŞAP resmi site"
+    assert arama_sorgusu("DEMİR MAKİNE LTD") == "DEMİR MAKİNE resmi site"

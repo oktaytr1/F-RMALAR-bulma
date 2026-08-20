@@ -249,6 +249,62 @@ def test_sektor_ailesi_yapi_insaat():
     )
 
 
+def test_yazilim_ailesi_title():
+    """Ünvanda yazılım, aday title'da bilişim — aynı aile."""
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "KORKMAZ YAZILIM TİCARET LTD",
+            "korkmazyazilim.com.tr",
+            title="Korkmaz Bilişim",
+            snippet="",
+        )
+        is True
+    )
+
+
+def test_reklam_makine_ailesi_title():
+    """Ünvanda reklam/makine, aday title'da eşanlamlı — aynı aile."""
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "KADIOĞLU REKLAM LTD",
+            "kadioglureklam.com.tr",
+            title="Kadıoğlu Matbaa Ajans",
+            snippet="",
+        )
+        is True
+    )
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "DEMİR MAKİNE LTD",
+            "demirmakine.com.tr",
+            title="Demir Mekanik",
+            snippet="",
+        )
+        is True
+    )
+
+
+def test_yazilim_mutfak_sitesi_sektor_yok():
+    """Canlı hata: KORKMAZ YAZILIM → korkmaz.com.tr mutfak; yazılım izi yok.
+
+    tam_marka + .tr muafiyeti kimliği kanıtlı sayar; sektör kelimesi ayrıca
+    şart değil. Sorgunun 'YAZILIM' içermesi asıl koruma — bu test sektör
+    sinyalinin ünvandan okunduğunu kilitler.
+    """
+    from utils import unvan_sektor_tokenlari, _sektor_pozitif_sinyal
+
+    assert "yazilim" in unvan_sektor_tokenlari("KORKMAZ YAZILIM TİCARET LTD")
+    assert (
+        _sektor_pozitif_sinyal(
+            "KORKMAZ YAZILIM TİCARET LTD",
+            "korkmaz.com.tr",
+            title="Korkmaz Mutfak Eşyaları",
+            snippet="Tencere tava",
+        )
+        is False
+    )
+
+
 def test_ticaret_sanayi_sektor_sayilmaz():
     """Ticaret/sanayi evrak kelimesi; sayfada aranmaz."""
     assert (
