@@ -1,0 +1,206 @@
+# Firma Web Sitesi ve E-posta Bulucu - Konfigürasyon Dosyası
+
+# Skor eşikleri
+skor:
+  yuksek_esik: 65  # 65 ve üzeri direkt kabul
+  dusuk_esik: 40   # 40'in altı direkt reddet
+
+# Bekleme süreleri (saniye)
+bekleme:
+  min_arasi: 6.0      # Firmalar arası minimum bekleme
+  max_arasi: 14.0     # Firmalar arası maksimum bekleme
+  min_mail: 0.5     # Mail taraması minimum bekleme
+  max_mail: 1.5     # Mail taraması maksimum bekleme
+
+# Dosya yolları
+dosyalar:
+  input: firmalar.xlsx
+  output_web: firmalar_web.xlsx
+  output_mail: firmalar_mail.xlsx
+  log: firma_bulucu.log
+
+# Google Arama Ayarları
+google:
+  max_aday: 10      # Maksimum aday domain sayısı.
+                    # Ölçüm: SERP'te organik sonuç sayısı medyan 8, aramaların
+                    # %70'inde 6'dan fazla. 6'da kesince kuyruktaki sonuçlar hiç
+                    # puanlanmıyordu. Adaylar skora göre sıralanır; eşit skorda
+                    # Google sırası korunur (stabil sort), ek ağ maliyeti yok.
+  captcha_timeout: 600  # CAPTCHA çözümü için maksimum bekleme (saniye)
+
+# Chrome Ayarları
+chrome:
+  debug_port: 9222  # Chrome remote debugging port
+
+# Mail Tarama Ayarları
+mail:
+  max_iletisim_sayfasi: 5  # Maksimum taranacak iletişim sayfası
+  max_sitemap_sayfa: 5     # Maksimum sitemap sayfası
+  timeout: 12              # HTTP isteği timeout (saniye)
+  retries: 2               # Retry sayısı
+  workers: 8               # Aynı anda taranacak firma sayısı (paralel işçi).
+                           # Her firma farklı bir site olduğu için tek siteye
+                           # yük binmez. Bağlantın iyiyse 12-16 da denenebilir.
+
+# LLM Ayarları
+# Groq 16 Ağustos 2026'da llama-3.3-70b-versatile'i kapattı (404).
+llm:
+  model: openai/gpt-oss-120b
+  temperature: 0.3
+  max_tokens: 512  # gpt-oss düşünme jetonu için 80 yetmez
+  enabled: true  # false yaparsanız LLM devre dışı kalır
+
+# Marka Ana Siteleri — Google sonuçlarından elenmesi gereken ana marka domain'leri
+# (Bunlar firma rehberleri değil, büyük markaların kendi siteleri.
+#  Firmaların yetkili servis/bayi sitelerini bulmak istemiyoruz.)
+ignore_marka_domainleri:
+  - daikin.com.tr
+  - iklimsa.com
+  - toshiba-klima.com.tr
+  - mitsubishi-electric.com.tr
+  - mitsubishielectric.com.tr
+  - lg.com
+  - samsung.com
+  - arcelik.com.tr
+  - beko.com
+  - vestel.com.tr
+  - vaillant.com.tr
+  - buderus.com.tr
+  - bosch-home.com.tr
+  - carrier.com
+  - trane.com
+  - york.com
+  - mitsubishi-klima
+  - emlakkonut.com.tr
+  - emlakkonut.com
+  - toki.gov.tr
+  - gyoder.org.tr
+  - atayatirim.com.tr
+  - atayatirim.com
+  - vkv.org.tr
+  - vkv.org
+  - koc.com.tr
+  - kocvakfi.org.tr
+  - vehbikocvakfi.org.tr
+  - vkvlise.com
+  - koc.university
+  - ku.edu.tr
+  # Ünlü markalar / büyük kurumlar — küçük inşaat firmaları bunlara eşleşmemeli
+  - atasay.com
+  - atasay.com.tr
+  - turktelekom.com.tr
+  - maden.org.tr
+  - kariyer.ibb.istanbul
+  - ibb.istanbul
+  - ibb.gov.tr
+
+# Oda / birlik / rehber / dizin kalıpları — domain veya URL içinde geçerse elenir.
+# Temel IGNORE listesi utils.py içindedir; buraya ek kalıplar yazılır.
+# Örn: rehber.corlutso.org.tr, istanbultso.org.tr, xxx-ticaretodasi.org.tr
+ignore_domain_kaliplari:
+  # Ticaret / sanayi odaları ve birlikler
+  - tso.org.tr
+  - tobb.org.tr
+  - ticaretodasi
+  - sanayiodasi
+  - esnafodasi
+  - denizticaretodasi
+  - tzob.org.tr
+  - tesk.org.tr
+  - ito.org.tr
+  - atso.org.tr
+  - bso.org.tr
+  - aso.org.tr
+  - iso.org.tr
+  - tmmob.org.tr
+  - mmo.org.tr
+  - emo.org.tr
+  - imo.org.tr
+  - osb.org.tr
+  - kosgeb.gov.tr
+  - vakfi.org
+  - vakif.org
+  - .org.tr/vakif
+  # Resmi sicil / devlet (tekil siteler; tüm .gov.tr / .k12.tr / .edu.tr / meb utils'te elenir)
+  - ticaretsicil.gov.tr
+  - mersis.gtb.gov.tr
+  - gtb.gov.tr
+  - ticaret.gov.tr
+  - gib.gov.tr
+  - turkiye.gov.tr
+  - resmigazete.gov.tr
+  - uyap.gov.tr
+  # Rehber / dizin / VKN / B2B dizin
+  - rehber.
+  - firma-rehberi
+  - firmarehberi
+  - firmalarrehberi
+  - sirketrehberi
+  - sirketdizin
+  - isrehberi
+  - telefonrehberi
+  - yellowpages
+  - firmasec.com
+  - firmaenvanteri
+  - firmabulucu
+  - firmaara.com
+  - firmalistesi
+  - turkiyefirmalari
+  - bulurum.com
+  - yenifirma.com
+  - iyifirma.com
+  - find.com.tr
+  - 118.com.tr
+  - isletmeadresleri
+  - aratsana.com
+  - turkishexporter
+  - kompass
+  - cylex
+  - infobel
+  - vknsorgula
+  - mukellef.info
+  - rocketreach
+  - emis.com
+  - dnb.com
+  - zoominfo.com
+  - opencorporates.com
+  - europages
+  - hotfrog
+  - yelp.com
+  - foursquare.com
+  - trustpilot.com
+  # Pazaryeri / ilan / emlak
+  - n11.com
+  - trendyol.com
+  - hepsiburada.com
+  - amazon.com
+  - pazarama.com
+  - sahibinden.com
+  - letgo.com
+  - akakce.com
+  - cimri.com
+  - emlakkulisi
+  - emlakjet
+  - hepsiemlak
+  - hurriyetemlak
+  - zingat
+  # Sosyal / iş ilanı / şikayet
+  - linkedin.com
+  - facebook.com
+  - instagram.com
+  - kariyer.net
+  - yenibiris.com
+  - isinolsun.com
+  - armut.com
+  - sikayetvar.com
+  # Yetkili servis / bayi gürültüsü
+  - yetkiliservis
+  - yetkili-servis
+  - servisnoktasi
+  - enyakinyetkiliservis
+
+# Ara kayıt aralığı (her kaç firmada bir diske yazılsın)
+ara_kayit_araligi: 10
+
+# Dosya boyutu limiti (MB) — panel yükleme kontrolü
+max_dosya_boyutu_mb: 50

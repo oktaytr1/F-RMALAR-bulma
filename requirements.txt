@@ -1,0 +1,12 @@
+pandas==3.0.5
+openpyxl==3.1.5
+selenium==4.46.0
+webdriver-manager==4.1.2
+requests==2.34.2
+beautifulsoup4==4.15.0
+groq==1.6.0
+python-dotenv==1.2.2
+PyYAML==6.0.3
+tqdm==4.70.0
+lxml==6.1.1
+streamlit==1.61.1

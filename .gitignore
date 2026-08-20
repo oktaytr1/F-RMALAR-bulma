@@ -1,0 +1,39 @@
+# Environment variables / secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.pytest_cache/
+env/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Excel / data (kişisel listeler)
+~$*.xlsx
+*.xlsx
+*.numbers
+
+# Yedek / debug
+*.bak
+*.html
+cevap.txt
+source
+sitebulmadanoncebak.txt
+
+# Panel iş klasörleri ve log
+panel_jobs/
+firma_bulucu.log
+*.log

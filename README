@@ -1,0 +1,261 @@
+# Firma Web Sitesi ve E-posta Bulucu
+
+Türk firma sicil kayıtlarından Google araması ile web sitesi bulan ve bu sitelerden e-posta adresi çıkaran otomasyon aracı.
+
+## Akış
+
+```
+firmalar.xlsx → [sitebul.py] → firmalar_web.xlsx → [mailbul.py] → firmalar_mail.xlsx
+```
+
+Panel ile aynı akış tarayıcıdan da çalışır: Excel yükle → Site bul / Mail bul → sonuç indir.
+
+## 1. Kurulum (panel — önerilen)
+
+Her ekip bilgisayarına proje klasörünü kopyalayın, sonra:
+
+**macOS / Linux**
+```bash
+cd ~/Desktop/firmalarbulma/F-RMALAR-main
+./kurulum.sh
+```
+
+> Windows’tan kopyalanan `venv` Mac’te çalışmaz. `./kurulum.sh` bunu otomatik siler ve Mac sanal ortamını kurar.
+
+**Windows**
+```bat
+cd Desktop\firmalar
+kurulum.bat
+```
+
+Kurulum sonrası `.env` dosyasına Groq key yazın:
+```
+GROQ_API_KEY=gsk_xxxxxx
+```
+
+Key: [Groq Console](https://console.groq.com/)
+
+> **Önemli:** `.env` GitHub'a yüklenmemelidir (`.gitignore`'da).
+
+### Paneli başlat
+
+**macOS / Linux:** `./baslat.sh`  
+**Windows:** `baslat.bat`
+
+Script Chrome'u debug modda açar (gerekirse) ve paneli `http://localhost:8501` adresinde başlatır.
+
+Panelde:
+- Excel yükle (`UNVAN` / `Firma`; isteğe `SİCİL` / `Sicil`; isteğe `İLÇE` / `Ilce`; mail için `WEB`)
+- Site bul, Mail bul veya ikisi birden
+- Canlı log, sonuç indirme
+- CAPTCHA çıkınca panel uyarır, Chrome öne gelir; çözünce iş devam eder
+- Sol menüden skor / bekleme / worker ayarları (`config.yaml`)
+
+İş dosyaları `panel_jobs/` altında saklanır; kesilirse kaldığı yerden devam eder.
+
+### Manuel kurulum (panel olmadan)
+
+```bash
+cd ~/Desktop/firmalarbulma/F-RMALAR-main
+python3 -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+`config.yaml` skor eşikleri, bekleme süreleri, dosya yolları ve LLM ayarlarını tutar.
+
+## 2. Çalıştırma (komut satırı)
+
+### 2.1 Chrome Debug Modunda Başlat (Ayrı Terminal)
+
+> `baslat.sh` / `baslat.bat` bunu otomatik yapar. Sadece CLI kullanıyorsanız:
+
+**Windows:**
+```powershell
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\chrome_selenium"
+```
+
+Alternatif (daha basit):
+```powershell
+Start-Process chrome.exe -ArgumentList "--remote-debugging-port=9222", "--user-data-dir=$env:USERPROFILE\chrome_selenium"
+```
+
+**macOS:**
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="$HOME/chrome_selenium"
+```
+
+**Linux:**
+```bash
+google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/chrome_selenium"
+```
+
+> Bu pencere açık kalmalıdır. Script bu Chrome'a bağlanır.
+
+### 2.2 sitebul.py — Web Sitesi Bulma
+
+**Windows (PowerShell):**
+```powershell
+cd C:\Users\oktay\Desktop\firmalar
+.\venv\Scripts\Activate.ps1
+python sitebul.py
+```
+
+**macOS/Linux:**
+```bash
+cd ~/Desktop/firmalarbulma/F-RMALAR-main
+source venv/bin/activate
+python sitebul.py
+```
+
+**Farklı dosyalarla çalışma:**
+```bash
+# Varsayılan: config.yaml'daki dosyaları kullanır
+python sitebul.py
+
+# Farklı girdi dosyası (çıktı otomatik türetilir)
+python sitebul.py --input firmalar_1.xlsx          # → firmalar_1_web.xlsx
+python sitebul.py --input firmalar_2.xlsx          # → firmalar_2_web.xlsx
+
+# Girdi + çıktı dosyasını belirle
+python sitebul.py --input firmalar_1.xlsx --output istanbul_web.xlsx
+
+# Kısa kullanım
+python sitebul.py -i firmalar_1.xlsx -o istanbul_web.xlsx
+```
+
+**Ne olur?**
+- Girdi dosyası okunur (SİCİL, UNVAN sütunları; Sicil/Firma alias kabul; opsiyonel İLÇE)
+- Her firma Google'da aranır (İLÇE varsa sorguya eklenir: `marka resmi site Kadıköy`)
+- Firma adı ↔ domain benzerlik skoru hesaplanır (0-100)
+- **Skor Akışı:**
+  - Skor ≥ 65: Direkt kabul (LLM yok)
+  - Skor 40-64: Hızlı kontrol → title/og:site_name → başarısız olursa LLM (fallback)
+  - Domain ünvanın baştan gelen kelimelerinin birebir karşılığıysa (`NİLPA İNŞAAT`
+    → `nilpa.com.tr`) ve TR sinyali varsa, ayrıca sektör kelimesi aranmaz
+  - LLM kota sınırına (429) takılırsa bekleyip tekrar dener, sonra yedek modele
+    geçer; hiçbiri olmazsa firma **reddedilmez**, `LLM_YOK` olarak işaretlenir
+    (kararsız — RED ile karıştırılmamalı)
+  - Skor < 40: Direkt reddet (LLM yok)
+- Google sorgusu marka kelimeleri + "resmi site" (LTD/A.Ş. vb. atılır)
+- `/iletisim` gibi path'ler elenmez; aday her zaman kök domain olarak alınır
+- Google CAPTCHA çıkarsa Chrome penceresinde çözmen beklenir (config'dan ayarlanabilir timeout)
+- **Progress bar** ile ilerleme takibi
+- **Logging sistemi** ile tüm işlemler `firma_bulucu.log` dosyasına kaydedilir
+- **Resume özelliği:** Script kesilirse kaldığı yerden devam eder (otomatik)
+- Sonuç: `*_web.xlsx` (SİCİL, UNVAN, WEB, SKOR, DURUM, ADAY_WEB, RED_NEDEN)
+
+**Gözden geçirme sütunları**
+
+Reddedilen aday artık kaybolmuyor: `ADAY_WEB` en yüksek skorlu adayı,
+`RED_NEDEN` reddin gerekçesini yazar (KABUL satırlarında ikisi de boştur).
+Böylece "yanlışlıkla elenmiş" satırlar Excel'de tek bakışta taranabilir.
+
+**Durum değerleri**
+
+| DURUM | Anlamı |
+|-------|--------|
+| `KABUL` | Site bulundu |
+| `KABUL_SUPHELI` | Site bulundu ama **aynı domain başka bir firmaya da atandı** (jenerik marka; gözden geçirin) |
+| `RED_SKOR` | En iyi adayın skoru düşük eşiğin altında |
+| `RED_SEKTOR` | Aday ünvanın sektörüyle çelişiyor / sektör sinyali yok |
+| `RED_DOGRULAMA` | title ve LLM adayı onaylamadı |
+| `SITE_YOK` | Google sonuçlarında elenmemiş aday yok |
+| `TIMEOUT` | Google açılamadı veya CAPTCHA süresi doldu |
+| `LLM_YOK` | **Karar verilemedi** (LLM kotası doldu). Red değildir — aday `ADAY_WEB`'de durur. Diğer durumlar gibi işlenmiş sayılır; otomatik yeniden denenmez, istenirse bu satırlar süzülüp ayrı bir girdi dosyasıyla tekrar çalıştırılır |
+
+> **Resume Özelliği:** Script herhangi bir nedenle kesilirse (internet kopması, hata, kapatma), tekrar çalıştırıldığında kaldığı yerden devam eder. Zaten işlenmiş firmalar atlanır — `TIMEOUT` ve `LLM_YOK` dahil.
+
+**`LLM_YOK` satırlarını sonradan tekrar denemek**
+
+Kota ertesi gün yenilendiğinde bu satırları süzüp ayrı bir girdi olarak verin:
+
+```python
+import pandas as pd
+d = pd.read_excel("firmalar_web.xlsx")
+d[d["DURUM"] == "LLM_YOK"][["SİCİL", "UNVAN"]].to_excel("kalanlar.xlsx", index=False)
+```
+
+```bash
+python sitebul.py -i kalanlar.xlsx -o kalanlar_web.xlsx
+```
+
+### 2.3 mailbul.py — E-posta Bulma
+
+```bash
+# Varsayılan: config.yaml'daki dosyaları kullanır
+python mailbul.py
+
+# Farklı girdi dosyası (çıktı otomatik türetilir)
+python mailbul.py --input firmalar_1_web.xlsx      # → firmalar_1_mail.xlsx
+python mailbul.py --input firmalar_2_web.xlsx      # → firmalar_2_mail.xlsx
+
+# Girdi + çıktı dosyasını belirle
+python mailbul.py --input firmalar_1_web.xlsx --output istanbul_mail.xlsx
+
+# Kısa kullanım
+python mailbul.py -i firmalar_1_web.xlsx -o istanbul_mail.xlsx
+```
+
+**Ne olur?**
+- Girdi dosyası okunur
+- Her sitenin ana sayfası + iletişim sayfaları taranır
+- E-posta adresleri regex + `mailto:` linkleri ile toplanır
+- Öncelik sırası:
+  1. Site domain'i (veya alt/üst domain'i) ile aynı adresler
+  2. Farklı domainde ama **ünvanın markasını taşıyanlar** — site zaten firmanın
+     kendisi olarak doğrulandığı için bunlar da firmanın adresi sayılır
+     (`medemainsaat@gmail.com`, `info@medema.com.tr`)
+  3. Kalan farklı-domain adresleri seçilmez ama kaybolmaz: en iyisi `ADAY_EMAIL`
+     sütununa yazılır
+- Öncelikli mailler (info@, iletisim@, contact@) tercih edilir
+- Spam mailler (noreply, kariyer, muhasebe vb.) elenir. `ik@` gibi `@` ile biten
+  kalıplar **tam yerel kısım** olarak eşleşir — `teknik@`, `mühendislik@`,
+  `iletisim@` gibi meşru adresler artık elenmez
+- **Progress bar** ile ilerleme takibi
+- **Logging sistemi** ile tüm işlemler `firma_bulucu.log` dosyasına kaydedilir
+- **Resume özelliği:** Script kesilirse kaldığı yerden devam eder (otomatik)
+- Girdideki ek sütunlar (SKOR, DURUM, ADAY_WEB, RED_NEDEN, İLÇE ve kendi
+  sütunlarınız) çıktıya aynen taşınır — böylece panelde "Site bul + Mail bul"
+  birlikte çalıştırıldığında gözden geçirme sütunları son dosyada da kalır
+- Sonuç: `*_mail.xlsx` (SİCİL, UNVAN, WEB, EMAIL, ADAY_EMAIL + taşınan sütunlar)
+
+> **Resume Özelliği:** Script herhangi bir nedenle kesilirse, tekrar çalıştırıldığında kaldığı yerden devam eder. Zaten işlenmiş firmalar atlanır.
+
+## 3. Çalışma Mantığı
+
+### sitebul.py
+- Selenium + Chrome ile Google'da arama yapar
+- `utils.IGNORE` + `config.yaml` kalıpları ile firma rehberleri, sosyal medya, yetkili servis sitelerini eler
+  - Kalıplar **yalnızca host'ta** aranır; meşru bir sitenin yolu (`ornek.com/isrehberi`)
+    firmayı eletmez. Yol kalıbı gerekiyorsa kalıba `/` koyun (`.org.tr/vakif`)
+- Google sonuçlarından en fazla `google.max_aday` (varsayılan 10) aday domain toplanır,
+  skora göre sıralanır; eşit skorda Google sırası korunur
+- `marka_tokenlari()` / `benzerlik_skoru()` (`utils`) ile firma ünvanından marka çıkarır ve skorlar ("MEDEMA İNŞAAT LTD ŞTİ" → `medema`)
+- Türkçe karakter normalizasyonu (ş→s, ı→i, ğ→g)
+- Rastgele bekleme (6-14 sn) ile CAPTCHA riskini azaltır
+
+### mailbul.py
+- Ana sayfa + iletişim/kurumsal/hakkımızda sayfalarını tarar
+- `ayni_domain()` ile sadece siteyle aynı domaindeki mailleri kabul eder
+- `ONCELIK` listesi ile kurumsal mailleri tercih eder
+- `RED` listesi ile otomatik/spam mailleri eler
+
+## 4. Dosya Yapısı
+
+| Dosya | Açıklama |
+|-------|---------|
+| `panel.py` | Streamlit paneli (Excel yükle / çalıştır / indir) |
+| `baslat.sh` / `baslat.bat` | Chrome + paneli başlatır |
+| `kurulum.sh` / `kurulum.bat` | venv + paket kurulumu |
+| `firmalar.xlsx` | Girdi: SİCİL + UNVAN (Sicil/Firma alias OK) |
+| `sitebul.py` | 1. aşama: Web sitesi bulma |
+| `firmalar_web.xlsx` | Ara çıktı: Web sitesi + Skor |
+| `mailbul.py` | 2. aşama: E-posta bulma |
+| `firmalar_mail.xlsx` | Son çıktı: E-posta adresleri |
+| `config.yaml` | Konfigürasyon dosyası (eşikler, süreler, dosya yolları) |
+| `.env` | Groq API key (gizli) |
+| `requirements.txt` | Python bağımlılıkları |
+| `panel_jobs/` | Panel iş dosyaları (otomatik) |
+| `firma_bulucu.log` | Log dosyası (otomatik oluşturulur) |
+| `.gitignore` | Git'ten hariç tutulan dosyalar |
