@@ -71,6 +71,7 @@ from utils import (
     ilce_metinde_mi,
     _sektor_pozitif_sinyal,
     groq_chat_metin,
+    llm_kota_sifirla,
     unvan_faaliyet_kelimeleri,
 )
 
@@ -1025,6 +1026,7 @@ def main():
         )
     if GROQ_API_KEY and LLM_ENABLED:
         groq_client = Groq(api_key=GROQ_API_KEY)
+        llm_kota_sifirla()
     else:
         groq_client = None
         logger.warning("GROQ_API_KEY bulunamadı veya LLM devre dışı. LLM özelliği kullanılmayacak.")

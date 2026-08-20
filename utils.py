@@ -2035,8 +2035,20 @@ _429_SURE_RE = re.compile(
     r"try again in\s*(?:(\d+)m)?\s*([\d.]+)s", re.IGNORECASE
 )
 
-_429_MAX_BEKLEME = 300.0   # 5 dk üstü beklemeye değmez, yedek modele geç
-_429_MAX_DENEME = 2        # aynı model için en fazla bu kadar tekrar
+# TPM (saniyelik) burst: kısa bekle. TPD (dakikalık) reset beklenmez —
+# skor 100 olsa bile kuyruk 5–10 dk kilitlenmesin; yedek model / LLM_YOK.
+_429_MAX_BEKLEME = 8.0
+_429_MAX_DENEME = 1        # aynı model için en fazla bir kısa tekrar
+
+# Tüm modeller TPD/dakikalık 429 verince bu koşunun kalan firmalarında
+# LLM tekrar denenmez (aynı Groq org kotası).
+_llm_kota_kesildi = False
+
+
+def llm_kota_sifirla() -> None:
+    """Yeni site-bul koşusunda kota kilidini aç."""
+    global _llm_kota_kesildi
+    _llm_kota_kesildi = False
 
 
 def _429_bekleme_saniyesi(mesaj: str) -> float:
@@ -2065,11 +2077,15 @@ def groq_chat_metin(
     max_tokens: int = 512,
     logger=None,
 ) -> str:
-    """Groq chat; model 404 olursa yedek modele, 429 olursa bekleyip tekrar.
+    """Groq chat; model 404 olursa yedek modele, 429 olursa kısa bekler.
 
-    Kota (429) hiçbir modelde aşılamazsa ``LLMErisilemedi`` fırlatır; çağıran
-    taraf bunu "eşleşme bulunamadı" ile karıştırmamalıdır.
+    Dakikalık TPD 429'de uyumaz, sonraki modele geçer. Hiçbir model
+    açılamazsa ``LLMErisilemedi`` fırlatır ve bu süreçte LLM kapanır
+    (aynı kota, her kısa markada 3×429 olmasın).
     """
+    global _llm_kota_kesildi
+    if _llm_kota_kesildi:
+        raise LLMErisilemedi("LLM kotası tükendi; bu koşuda tekrar denenmeyecek")
     n = int(max_tokens or 512)
     if n < 256:
         n = 256
@@ -2121,7 +2137,7 @@ def groq_chat_metin(
                                 f"geçiliyor (gereken bekleme: {bekle:.0f} sn)"
                             )
                         break
-                    bekle = min(max(bekle + 2.0, 5.0), _429_MAX_BEKLEME)
+                    bekle = min(max(bekle + 1.0, 1.0), _429_MAX_BEKLEME)
                     if logger:
                         logger.warning(
                             f"  ⏳ LLM kota sınırı ({m}); {bekle:.0f} sn bekleniyor "
@@ -2162,6 +2178,7 @@ def groq_chat_metin(
         return text
 
     if kota_engeli:
+        _llm_kota_kesildi = True
         raise LLMErisilemedi(f"LLM kotası tükendi: {son_hata}")
     raise son_hata or RuntimeError("LLM cevap üretmedi")
 
