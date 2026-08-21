@@ -66,3 +66,16 @@ def test_kisa_tek_marka_tam_ve_onek_serbest():
     assert hizli_domain_kontrol(unvan, "iska.com.tr") is True
     # 6 harf: kural yok, MEDEMA/MEDENA bulanık kalır
     assert benzerlik_skoru("MEDEMA İNŞAAT", "medena.com.tr") > 35
+
+
+def test_enb_kisa_onek_enginbant():
+    unvan = (
+        "ENB ENGİN BANT ZIMPARA VE POLİSAJ MALZEMELERİ SANAYİ DIŞ TİCARET "
+        "LİMİTED ŞİRKETİ"
+    )
+    assert benzerlik_skoru(unvan, "enginbant.com") == 100
+    assert hizli_domain_kontrol(unvan, "enginbant.com") is True
+
+
+def test_ata_silah_ataarms():
+    assert benzerlik_skoru("ATA SİLAH SANAYİ ANONİM ŞİRKETİ", "ataarms.com") == 100

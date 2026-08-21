@@ -63,6 +63,8 @@ from utils import (
     kisa_marka_mi,
     kisa_tek_marka_bulanik_yasak,
     ulke_sektor_uyumlu_mu,
+    tam_marka_eslesmesi_mi,
+    unvan_cekirdek_adaylari,
     sektor_uyumsuz_mu,
     dogrulama_zorunlu_mu,
     dogrulama_log_nedenleri,
@@ -404,8 +406,10 @@ def hizli_domain_kontrol(firma_adi, domain):
     if sektor_uyumsuz_mu(firma_adi, domain):
         return False
 
-    # Etiket / tam marka eşitliği
+    # Etiket / tam marka eşitliği (ENB→enginbant, silah→arms dahil)
     if marka == cekirdek or marka in etiketler:
+        return True
+    if cekirdek in unvan_cekirdek_adaylari(firma_adi):
         return True
     if any(len(t) >= 3 and t in etiketler for t in tokenlar):
         return True
@@ -594,12 +598,23 @@ def title_veya_llm_onayla(firma, en_iyi_url, en_iyi_domain, adaylar, ilce="", dr
             snippet=m.get("snippet") or "",
         )
 
-    def _ek_sinyal(domain: str, sayfa_title: str = "", govde: str = "") -> bool:
+    def _ek_sinyal(
+        domain: str,
+        sayfa_title: str = "",
+        govde: str = "",
+        marka_sayfada: bool = False,
+    ) -> bool:
         m = _serp_meta_esle(domain, serp_meta)
         title = sayfa_title or (m.get("title") or "")
         snippet = m.get("snippet") or ""
         return ulke_sektor_uyumlu_mu(
-            firma, domain, title=title, snippet=snippet, ilce=ilce, govde=govde
+            firma,
+            domain,
+            title=title,
+            snippet=snippet,
+            ilce=ilce,
+            govde=govde,
+            marka_sayfada=marka_sayfada,
         )
 
     # Sektör uyumsuz adayı title ile bile kabul etme
@@ -621,7 +636,9 @@ def title_veya_llm_onayla(firma, en_iyi_url, en_iyi_domain, adaylar, ilce="", dr
                 sayfa_govde = _iletisim_adres_ekle(
                     en_iyi_url, soup, sayfa_govde, ilce
                 )
-            if not _ek_sinyal(en_iyi_domain, ham_title, sayfa_govde):
+            if not _ek_sinyal(
+                en_iyi_domain, ham_title, sayfa_govde, marka_sayfada=True
+            ):
                 if logger:
                     logger.info(
                         f"  ⚠ title yetmedi (aday Türkiye/sektör uymadı: {en_iyi_domain})"
@@ -645,7 +662,19 @@ def title_veya_llm_onayla(firma, en_iyi_url, en_iyi_domain, adaylar, ilce="", dr
             if logger:
                 logger.info(f"  ⚠ Sektör uyumsuz LLM seçimi elendi: {sec_domain}")
             return "", None, None
-        if sec_domain and not _ek_sinyal(sec_domain):
+        llm_title = _serp_meta_esle(sec_domain, serp_meta).get("title") or ""
+        llm_marka = bool(
+            tam_marka_eslesmesi_mi(firma, sec_domain)
+            or (
+                llm_title
+                and title_marka_uyumlu(
+                    llm_sonuc, firma, siki=siki, ham=llm_title
+                )
+            )
+        )
+        if sec_domain and not _ek_sinyal(
+            sec_domain, llm_title, marka_sayfada=llm_marka
+        ):
             if logger:
                 logger.info(
                     f"  ⚠ LLM seçimi elendi (Türkiye/sektör uymadı): {sec_domain}"

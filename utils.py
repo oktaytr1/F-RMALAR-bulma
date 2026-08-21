@@ -372,7 +372,8 @@ def normalize_tr(s: str) -> str:
 # Firma adında marka OLMAYAN genel / sektör / hukuki / coğrafya kelimeleri.
 GENEL_KELIMELER = {
     "limited", "ltd", "sirketi", "sti", "anonim", "as",
-    "sanayi", "san", "ticaret", "tic", "dis", "ithalat", "ihracat",
+    "sanayi", "sanayii", "san", "ticaret", "tic", "dis", "ithalat", "ihracat",
+    "malzeme", "malzemeler", "malzemeleri",
     "insaat", "dekorasyon", "yapi", "mimarlik", "proje", "danismanlik",
     "muhendislik", "otomotiv", "bilisim", "hizmetleri", "hizmet",
     "test", "laboratuvar", "belgelendirme", "gida", "tekstil",
@@ -775,6 +776,7 @@ _SEKTOR_POZITIF = _SEKTOR_INSAAT_UNVAN | {
     "makina",
     "construction",
     "engineering",
+    "metal",
 }
 
 # Aynı faaliyet ailesi: ünvanda inşaat varsa adayda yapı/construction da sayılır.
@@ -1135,15 +1137,126 @@ def _sektor_pozitif_sinyal(
 # en az bu kadar harf olması gerekir (YCD → 3 harf, muafiyet yok).
 _TAM_MARKA_MIN_UZUNLUK = 5
 
+# Ünvan kelimesi → domain'de görülen İngilizce karşılık (ata + silah → ataarms).
+_TOKEN_CEVIRI = {
+    "silah": ("arms", "gun"),
+    "asindirici": ("abrasive", "abrasives"),
+    "asindiricilari": ("abrasive", "abrasives"),
+}
+
+# Title'da marka dışı sayılmayan dolgu (kompakt title kontrolü).
+_TITLE_DOLGU = {
+    "home",
+    "homepage",
+    "official",
+    "resmi",
+    "site",
+    "website",
+    "anasayfa",
+    "www",
+    "welcome",
+    "hosgeldiniz",
+    "index",
+}
+
+
+def _token_cevirileri(token: str) -> tuple[str, ...]:
+    t = (token or "").strip().lower()
+    if not t:
+        return ()
+    return (t,) + _TOKEN_CEVIRI.get(t, ())
+
+
+def _kisa_onek_atlanabilir(tokenlar: list[str], atlanan: int) -> bool:
+    """Baştan `atlanan` token'ın hepsi ≤3 harf kısaltma mı? (ENB, TM, GES)."""
+    if atlanan <= 0:
+        return True
+    if atlanan >= len(tokenlar):
+        return False
+    return all(len(tokenlar[j]) <= 3 for j in range(atlanan))
+
+
+def unvan_cekirdek_adaylari(unvan: str) -> set[str]:
+    """Domain çekirdeği olabilecek bitişik token birleşimleri.
+
+    Baştan birleşim + başına kısa kısaltma (ENB) atlanmış birleşimler +
+    sektör çevirisi (silah→arms). Soyad atılmaz: TUĞBA EFEOĞLU → efeoglu yok.
+    """
+    tokenlar = marka_tokenlari(unvan)
+    aday: set[str] = set()
+    n = len(tokenlar)
+    for i in range(n):
+        if not _kisa_onek_atlanabilir(tokenlar, i):
+            continue
+        varyantlar = [""]
+        for t in tokenlar[i:]:
+            alts = _token_cevirileri(t)
+            if not alts:
+                break
+            varyantlar = [p + a for p in varyantlar for a in alts]
+            for v in varyantlar:
+                if len(v) >= _TAM_MARKA_MIN_UZUNLUK:
+                    aday.add(v)
+            if varyantlar and min(len(v) for v in varyantlar) > 48:
+                break
+    return aday
+
+
+def ayirt_edici_token_domain_mi(unvan: str, domain: str) -> bool:
+    """Domain çekirdeği, ünvandaki tek bir ayırt edici token (≥5 harf) mı?
+
+    EKŞİOĞLU KANEK → kanek.com.tr. Soyad domain'i (efeoglu.com) .com'da
+    tam_marka sayılmaz; bu yardımcı yalnız .tr + sayfa onayında kullanılır.
+    """
+    cekirdek = "".join(domain_marka_etiketleri(domain))
+    if len(cekirdek) < _TAM_MARKA_MIN_UZUNLUK:
+        return False
+    return any(
+        t == cekirdek
+        for t in marka_tokenlari(unvan)
+        if len(t) >= _TAM_MARKA_MIN_UZUNLUK
+    )
+
+
+def title_marka_kompakt_mi(unvan: str, title: str) -> bool:
+    """Title büyük ölçüde marka adı mı? (pazar yeri cümlesi değil).
+
+    'ORTASAN' / 'ORTASAN Sanayi' → True. 'Gerber Baby Food' → False.
+    'Homes.com: Houses for Sale' → False. HOMES/GERBER çakışmasını keser.
+    """
+    tokenlar = marka_tokenlari(unvan)
+    if not tokenlar or not (title or "").strip():
+        return False
+    kelimeler = metin_kelimeleri_normalize(title)
+    if not kelimeler:
+        return False
+    marka_kume = set(tokenlar)
+    birlesik = "".join(tokenlar)
+    ceviri = {a for t in tokenlar for a in _token_cevirileri(t)}
+    kalan = []
+    for k in kelimeler:
+        if len(k) <= 2:
+            continue
+        if k in marka_kume or k in ceviri or k in GENEL_KELIMELER or k in _TITLE_DOLGU:
+            continue
+        if k == birlesik:
+            continue
+        if any(len(t) >= 4 and (t == k or t in k or k in t) for t in tokenlar):
+            continue
+        kalan.append(k)
+    return len(kalan) <= 1
+
 
 def tam_marka_eslesmesi_mi(unvan: str, domain: str) -> bool:
-    """Domain çekirdeği, ünvanın BAŞTAN gelen kelimelerinin birebir birleşimi mi?
+    """Domain çekirdeği, ünvanın marka token birleşimine eşit mi?
 
     Domain, ünvanda olmayan hiçbir şey söylemiyorsa güçlü kimlik sinyalidir:
 
         NİLPA İNŞAAT              + nilpa.com.tr        → True
         DUMAN HİDROLİK YAPI …     + dumanhidrolik.com   → True
         ASİLLER OTO YEDEK PARÇA … + asilleroto.com      → True
+        ENB ENGİN BANT            + enginbant.com       → True (kısa önek ENB)
+        ATA SİLAH                 + ataarms.com         → True (silah→arms)
 
     Domain fazladan kelime/alt alan taşıyorsa False:
 
@@ -1153,24 +1266,12 @@ def tam_marka_eslesmesi_mi(unvan: str, domain: str) -> bool:
 
     Kısa kısaltmalar (YCD → 'ycd') _TAM_MARKA_MIN_UZUNLUK ile elenir; onlar
     büyük kurum domain'lerine kolayca yapıştığı için ek doğrulama gerektirir.
+    Soyad atılmaz: TUĞBA EFEOĞLU → efeoglu.com False.
     """
-    tokenlar = marka_tokenlari(unvan)
-    if not tokenlar:
-        return False
-
     cekirdek = "".join(domain_marka_etiketleri(domain))
     if len(cekirdek) < _TAM_MARKA_MIN_UZUNLUK:
         return False
-
-    # Ünvanın baştan gelen kelimelerini birleştirerek çekirdeği yakalamaya çalış
-    onek = ""
-    for t in tokenlar:
-        onek += t
-        if onek == cekirdek:
-            return True
-        if len(onek) > len(cekirdek):
-            break
-    return False
+    return cekirdek in unvan_cekirdek_adaylari(unvan)
 
 
 def mail_marka_uyumlu(mail: str, unvan: str) -> bool:
@@ -1219,6 +1320,7 @@ def ulke_sektor_uyumlu_mu(
     snippet: str = "",
     ilce: str = "",
     govde: str = "",
+    marka_sayfada: bool = False,
 ) -> bool:
     """Aday ülke ve sektör olarak ünvana uyuyor mu? Tüm aramalarda kullanılır.
 
@@ -1229,12 +1331,25 @@ def ulke_sektor_uyumlu_mu(
       gövdesinde geçiyorsa eksik sektör title'ını doldurur; tek başına KABUL değil.
     - Sicil ilçesi yok + net başka ilçe + başka sektör → hayır (şube: iki ilçe varsa red yok).
     - Sektör yok ve marka kısaysa: TR coğrafyası gerekir (yalnız title yetmez).
+    - marka_sayfada: title/LLM markayı sayfada görmüş. Tam marka .com o zaman
+      kompakt title ile kabul edilir (ORTASAN → ortasan.com). Direkt kabul
+      (SERP-only) hâlâ TR ister — HOMES → homes.com otomatik girmez.
     """
     tr = _tr_ulke_sinyali(domain, title, snippet, ilce, govde=govde)
     if _yabanci_cctld_mi(domain) and not tr:
         return False
     if _ilce_yabanci_sektor_red(unvan, ilce, govde):
         return False
+    tam = tam_marka_eslesmesi_mi(unvan, domain)
+    cekirdek_len = len("".join(domain_marka_etiketleri(domain)))
+    kisa_cekirdek = cekirdek_len <= _TAM_MARKA_MIN_UZUNLUK
+    sayfa_tam_marka = (
+        marka_sayfada
+        and tam
+        and not zayif_tek_marka_tokeni(unvan)
+        and not (kisa_marka_mi(unvan) and kisa_cekirdek)
+        and title_marka_kompakt_mi(unvan, title)
+    )
     if unvan_sektor_tokenlari(unvan):
         if _sektor_pozitif_sinyal(unvan, domain, title, snippet, govde=govde):
             return True
@@ -1242,15 +1357,25 @@ def ulke_sektor_uyumlu_mu(
         # zaten kanıtlanmıştır; ayrıca sektör kelimesi şart koşmak marka-adı
         # domain'lerini (nilpa.com.tr, duzey.com.tr) haksız yere eliyordu.
         #
-        # TR sinyali şart: jenerik TLD'de bu muafiyet tek başına doğrudan kabule
-        # dönüşür ve HOMES İNŞAAT → homes.com, GERBER YAPI → gerber.com gibi
-        # büyük yabancı siteleri içeri alır. TR sinyali yoksa aday reddedilmez,
-        # yalnızca title/LLM doğrulamasına gider.
+        # TR sinyali şart (direkt kabul): jenerik TLD'de bu muafiyet tek başına
+        # HOMES İNŞAAT → homes.com, GERBER YAPI → gerber.com içeri alır.
+        # Title/LLM markayı gördüyse kompakt title yeter (ortasan.com).
         # Ters yöndeki çelişki (petshop, vakıf…) sektor_uyumsuz_mu ile ayrıca
         # kontrol edildiği için bu muafiyet o korumayı zayıflatmaz.
-        if tr and tam_marka_eslesmesi_mi(unvan, domain):
+        if tr and tam:
+            return True
+        if sayfa_tam_marka:
+            return True
+        # İkinci kelime marka + .tr (EKŞİOĞLU KANEK → kanek.com.tr)
+        if (
+            marka_sayfada
+            and tr
+            and ayirt_edici_token_domain_mi(unvan, domain)
+        ):
             return True
         return ilce_metinde_mi(ilce, govde)
+    if sayfa_tam_marka:
+        return True
     if kisa_marka_mi(unvan):
         return tr
     return True
@@ -1263,9 +1388,12 @@ def kisa_marka_ek_sinyal_var(
     snippet: str = "",
     ilce: str = "",
     govde: str = "",
+    marka_sayfada: bool = False,
 ) -> bool:
     """ulke_sektor_uyumlu_mu takma adı (eski çağrılar)."""
-    return ulke_sektor_uyumlu_mu(unvan, domain, title, snippet, ilce, govde)
+    return ulke_sektor_uyumlu_mu(
+        unvan, domain, title, snippet, ilce, govde, marka_sayfada=marka_sayfada
+    )
 
 
 def dogrulama_log_nedenleri(
@@ -1450,8 +1578,12 @@ def benzerlik_skoru(unvan: str, netloc: str) -> int:
     if not marka or not cekirdek:
         return 0
 
-    # Tam marka = çekirdek veya tek etiket
-    if marka == cekirdek or marka in etiketler:
+    # Tam marka = çekirdek veya tek etiket (kısa önek / silah→arms dahil)
+    if (
+        marka == cekirdek
+        or marka in etiketler
+        or cekirdek in unvan_cekirdek_adaylari(unvan)
+    ):
         skor = 100
     # Domain, markanın öneki/eki ise: kısa kalan harfler farklı firma demektir
     # (polat ⊂ polatim, celik ⊂ celikel) → otomatik kabul skoruna ÇIKARMA

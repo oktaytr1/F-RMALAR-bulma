@@ -160,7 +160,7 @@ def test_tam_marka_domaini_sektor_kelimesi_gerektirmez():
         )
         is True
     )
-    # Jenerik TLD + TR sinyali yok → muafiyet YOK (HOMES İNŞAAT → homes.com
+    # Jenerik TLD + TR sinyali yok → direkt kabul YOK (HOMES İNŞAAT → homes.com
     # riski). Aday reddedilmez, title/LLM doğrulamasına gider.
     assert (
         ulke_sektor_uyumlu_mu(
@@ -170,6 +170,17 @@ def test_tam_marka_domaini_sektor_kelimesi_gerektirmez():
             snippet="",
         )
         is False
+    )
+    # Title markayı gördü + kompakt title → .com tam marka kabul
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "MEDEMA İNŞAAT",
+            "medema.com",
+            title="Medema",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
     )
     # Jenerik TLD ama sayfada TR coğrafya sinyali → muafiyet geçerli
     assert (
@@ -359,4 +370,103 @@ def test_ignore_yol_kalibi_url_de_aranir():
     assert (
         ignore_edilmeli("https://ornek.org.tr/projeler", "ornek.org.tr", kaliplar)
         is False
+    )
+
+
+def test_homes_kompakt_olmayan_title_red():
+    """HOMES İNŞAAT + homes.com pazar yeri title'ı, sayfa onaylı olsa da red."""
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "HOMES İNŞAAT",
+            "homes.com",
+            title="Homes.com: Houses for Sale, Real Estate",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is False
+    )
+
+
+def test_gerber_uzun_title_red():
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "GERBER YAPI İNŞAAT",
+            "gerber.com",
+            title="Gerber Baby Food and Formula",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is False
+    )
+
+
+def test_ortasan_kompakt_title_kabul():
+    """Canlı kaçan: ORTASAN MAKİNE → ortasan.com title ORTASAN."""
+    assert tam_marka_eslesmesi_mi(
+        "ORTASAN MAKİNE İTHALAT İHRACAT SANAYİ VE TİCARET LİMİTED ŞİRKETİ",
+        "ortasan.com",
+    )
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "ORTASAN MAKİNE İTHALAT İHRACAT SANAYİ VE TİCARET LİMİTED ŞİRKETİ",
+            "ortasan.com",
+            title="ORTASAN",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
+    )
+    # Direkt kabul hâlâ yok (SERP-only)
+    assert (
+        ulke_sektor_uyumlu_mu(
+            "ORTASAN MAKİNE İTHALAT İHRACAT SANAYİ VE TİCARET LİMİTED ŞİRKETİ",
+            "ortasan.com",
+            title="ORTASAN",
+            snippet="",
+        )
+        is False
+    )
+
+
+def test_citgrass_tel_kisa_token_engellemez():
+    """Ünvanda TEL (3 harf) var diye citgrass.com elenmemeli."""
+    unvan = "ÇİTGRASS TEL VE ÇİT SİSTEMLERİ ÇELİK İNŞAAT ANONİM ŞİRKETİ"
+    assert tam_marka_eslesmesi_mi(unvan, "citgrass.com")
+    assert (
+        ulke_sektor_uyumlu_mu(
+            unvan,
+            "citgrass.com",
+            title="Çitgrass",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
+    )
+
+
+def test_cagrulman_kisa_cag_uzun_domain():
+    unvan = "ÇAĞ RULMAN SANAYİ VE DIŞ TİCARET LİMİTED ŞİRKETİ"
+    assert tam_marka_eslesmesi_mi(unvan, "cagrulman.com")
+    assert (
+        ulke_sektor_uyumlu_mu(
+            unvan,
+            "cagrulman.com",
+            title="Çağ Rulman",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
+    )
+    """EKŞİOĞLU KANEK → kanek.com.tr; soyad domain değil, .tr + sayfa onay."""
+    unvan = "EKŞİOĞLU KANEK İNŞAAT METAL SANAYİ VE TİCARET LİMİTED ŞİRKETİ"
+    assert tam_marka_eslesmesi_mi(unvan, "kanek.com.tr") is False
+    assert (
+        ulke_sektor_uyumlu_mu(
+            unvan,
+            "kanek.com.tr",
+            title="Kanek",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
     )
