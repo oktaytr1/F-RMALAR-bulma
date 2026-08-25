@@ -34,6 +34,15 @@ ROOT_DIR = Path(__file__).resolve().parent
 CAPTCHA_STATUS_PATH = ROOT_DIR / "panel_jobs" / "captcha_status.json"
 PROGRESS_STATUS_PATH = ROOT_DIR / "panel_jobs" / "progress_status.json"
 
+# Google SERP CSS — obfuscated sınıflar sık değişir; asıl kopya config.yaml'dadır.
+DEFAULT_SERP_CARDS = (
+    "div.tF2Cxc, div.g, div[data-sokoban-container], div.MjjYud > div"
+)
+DEFAULT_SERP_SNIPPET = (
+    "div.VwiC3b, div[data-sncf], div.IsZvec, span.st, "
+    'div[data-content-feature="1"], .MUxGbd'
+)
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -53,7 +62,15 @@ _DEFAULT_CONFIG = {
         "output_mail": "firmalar_mail.xlsx",
         "log": "firma_bulucu.log",
     },
-    "google": {"max_aday": 10, "captcha_timeout": 600},
+    "google": {
+        "max_aday": 10,
+        "captcha_timeout": 600,
+        # Google SERP sınıf adları sık değişir; config.yaml'dan okunur.
+        "selectors": {
+            "cards": DEFAULT_SERP_CARDS,
+            "snippet": DEFAULT_SERP_SNIPPET,
+        },
+    },
     "chrome": {"debug_port": 9222},
     "mail": {
         "max_iletisim_sayfasi": 5,
@@ -101,8 +118,31 @@ def load_config(path: str = "config.yaml") -> dict:
         elif isinstance(default_val, dict):
             for sub_key, sub_val in default_val.items():
                 cfg[key].setdefault(sub_key, sub_val)
+                if isinstance(sub_val, dict) and isinstance(cfg[key].get(sub_key), dict):
+                    for k3, v3 in sub_val.items():
+                        cfg[key][sub_key].setdefault(k3, v3)
 
     return cfg
+
+
+def google_serp_secicileri(cfg: dict | None = None) -> dict[str, str]:
+    """SERP kart / snippet CSS seçicileri (config.yaml → varsayılan).
+
+    Google sınıf adları (tF2Cxc, VwiC3b…) sık değişir. Önce
+    ``google.selectors``, yoksa üst düzey ``google_selectors`` okunur.
+    Eksik veya boş değerler DEFAULT_SERP_* ile doldurulur.
+    """
+    cfg = cfg or {}
+    sel: dict = {}
+    google = cfg.get("google")
+    if isinstance(google, dict) and isinstance(google.get("selectors"), dict):
+        sel = google["selectors"]
+    elif isinstance(cfg.get("google_selectors"), dict):
+        sel = cfg["google_selectors"]
+
+    cards = str(sel.get("cards") or "").strip() or DEFAULT_SERP_CARDS
+    snippet = str(sel.get("snippet") or "").strip() or DEFAULT_SERP_SNIPPET
+    return {"cards": cards, "snippet": snippet}
 
 
 # ---------------------------------------------------------------------------
@@ -2315,22 +2355,28 @@ def groq_chat_metin(
     raise son_hata or RuntimeError("LLM cevap üretmedi")
 
 
-def _llm_json_parse(text: str):
-    """LLM cevabından JSON dizi çıkarır."""
-    import re
-
+def _llm_json_metin_temizle(text: str) -> str:
+    """Markdown fence ve uç boşlukları atar."""
     raw = (text or "").strip()
     if not raw:
-        return []
-    # ```json ... ``` temizle
+        return ""
     raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
     raw = re.sub(r"\s*```$", "", raw)
+    return raw.strip()
+
+
+def _llm_json_parse(text: str):
+    """LLM cevabından JSON dizi çıkarır."""
+    raw = _llm_json_metin_temizle(text)
+    if not raw:
+        return []
     try:
         data = json.loads(raw)
         if isinstance(data, list):
             return data
         if isinstance(data, dict) and "sonuclar" in data:
-            return data["sonuclar"]
+            sonuclar = data["sonuclar"]
+            return sonuclar if isinstance(sonuclar, list) else []
     except Exception:
         pass
     m = re.search(r"\[[\s\S]*\]", raw)
@@ -2342,6 +2388,33 @@ def _llm_json_parse(text: str):
         except Exception:
             pass
     return []
+
+
+def _llm_json_nesne(text: str) -> dict | None:
+    """LLM cevabından JSON nesne çıkarır ({"domain": ...}).
+
+    Fence, önek metin ve tek elemanlı dizi sarmalayıcısını dener.
+    """
+    raw = _llm_json_metin_temizle(text)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            return data[0]
+    except Exception:
+        pass
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return None
 
 
 def supheli_eslesmeleri_llm_bul(df, batch_size: int = 12) -> tuple[pd.DataFrame, str]:

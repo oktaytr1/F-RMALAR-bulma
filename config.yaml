@@ -27,6 +27,12 @@ google:
                     # puanlanmıyordu. Adaylar skora göre sıralanır; eşit skorda
                     # Google sırası korunur (stabil sort), ek ağ maliyeti yok.
   captcha_timeout: 600  # CAPTCHA çözümü için maksimum bekleme (saniye)
+  # SERP DOM seçicileri — Google obfuscated sınıf adlarını ayda birkaç kez
+  # değiştirir (tF2Cxc, VwiC3b…). Title/snippet okunamazsa sitebul.py'ye
+  # dokunmadan burayı güncelle. Virgülle birden fazla yedek seçici yazılır.
+  selectors:
+    cards: 'div.tF2Cxc, div.g, div[data-sokoban-container], div.MjjYud > div'
+    snippet: 'div.VwiC3b, div[data-sncf], div.IsZvec, span.st, div[data-content-feature="1"], .MUxGbd'
 
 # Chrome Ayarları
 chrome:
@@ -36,7 +42,9 @@ chrome:
 mail:
   max_iletisim_sayfasi: 5  # Maksimum taranacak iletişim sayfası
   max_sitemap_sayfa: 5     # Maksimum sitemap sayfası
-  timeout: 12              # HTTP isteği timeout (saniye)
+  timeout: 8               # HTTP isteği timeout (saniye)
+  max_firma_saniye: 20     # Bir firma için toplam tavan. Dolunca kalan sayfalar
+                           # atlanır (yavaş/asılı site panelde dakikalarca bekletmesin).
   retries: 2               # Retry sayısı
   workers: 8               # Aynı anda taranacak firma sayısı (paralel işçi).
                            # Her firma farklı bir site olduğu için tek siteye

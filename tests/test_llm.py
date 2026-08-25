@@ -10,6 +10,8 @@ from utils import (
     groq_chat_metin,
     llm_kota_sifirla,
     load_config,
+    _llm_json_parse,
+    _llm_json_nesne,
 )
 
 
@@ -160,3 +162,156 @@ def test_429_tum_modeller_sonra_bu_kosuda_llm_kapanir(monkeypatch):
     except LLMErisilemedi:
         pass
     assert len(client.denenen) == n
+
+
+def test_llm_json_parse_dizi_ve_fence():
+    assert _llm_json_parse('[{"id": 1, "supheli": true}]') == [
+        {"id": 1, "supheli": True}
+    ]
+    assert _llm_json_parse('```json\n[{"id": 2}]\n```') == [{"id": 2}]
+    assert _llm_json_parse('{"sonuclar": [{"id": 3}]}') == [{"id": 3}]
+    assert _llm_json_parse("önce metin [{\"id\": 4}] sonra") == [{"id": 4}]
+    assert _llm_json_parse("") == []
+    assert _llm_json_parse("NONE") == []
+
+
+def test_llm_json_nesne_fence_ve_onek():
+    assert _llm_json_nesne('{"domain": "medema.com.tr"}') == {
+        "domain": "medema.com.tr"
+    }
+    assert _llm_json_nesne('{"domain": null}') == {"domain": None}
+    assert _llm_json_nesne('```json\n{"domain": "x.com"}\n```')["domain"] == "x.com"
+    assert (
+        _llm_json_nesne('Açıklama:\n{"domain": "y.com.tr"}')["domain"] == "y.com.tr"
+    )
+    assert _llm_json_nesne('[{"domain": "z.com"}]')["domain"] == "z.com"
+    assert _llm_json_nesne("NONE") is None
+    assert _llm_json_nesne("") is None
+
+
+class _SahteGroqCevap(_SahteGroq):
+    """İlk modelden verilen metni döndürür."""
+
+    def __init__(self, content: str):
+        super().__init__(set())
+        self.content = content
+
+    def create(self, **kwargs):
+        self.denenen.append(kwargs["model"])
+        return _SahteResp(self.content)
+
+
+_ADAYLAR = [
+    (80, "https://medema.com.tr/", "medema.com.tr"),
+    (45, "https://ornekrehber.com/", "ornekrehber.com"),
+]
+
+
+def test_llm_domain_sec_json_aday():
+    import sitebul
+
+    eski = sitebul.groq_client, sitebul.config, sitebul.logger
+    try:
+        llm_kota_sifirla()
+        sitebul.groq_client = _SahteGroqCevap('{"domain": "medema.com.tr"}')
+        sitebul.config = {
+            "llm": {
+                "model": "openai/gpt-oss-120b",
+                "temperature": 0.3,
+                "max_tokens": 512,
+            }
+        }
+        sitebul.logger = None
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) == "https://medema.com.tr/"
+    finally:
+        sitebul.groq_client, sitebul.config, sitebul.logger = eski
+
+
+def test_llm_domain_sec_json_null():
+    import sitebul
+
+    eski = sitebul.groq_client, sitebul.config, sitebul.logger
+    try:
+        llm_kota_sifirla()
+        sitebul.groq_client = _SahteGroqCevap('{"domain": null}')
+        sitebul.config = {
+            "llm": {
+                "model": "openai/gpt-oss-120b",
+                "temperature": 0.3,
+                "max_tokens": 512,
+            }
+        }
+        sitebul.logger = None
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) is None
+    finally:
+        sitebul.groq_client, sitebul.config, sitebul.logger = eski
+
+
+def test_llm_domain_sec_json_listede_yok():
+    import sitebul
+
+    eski = sitebul.groq_client, sitebul.config, sitebul.logger
+    try:
+        llm_kota_sifirla()
+        sitebul.groq_client = _SahteGroqCevap('{"domain": "uydurma.com"}')
+        sitebul.config = {
+            "llm": {
+                "model": "openai/gpt-oss-120b",
+                "temperature": 0.3,
+                "max_tokens": 512,
+            }
+        }
+        sitebul.logger = None
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) is None
+    finally:
+        sitebul.groq_client, sitebul.config, sitebul.logger = eski
+
+
+def test_llm_domain_sec_www_ve_fence():
+    import sitebul
+
+    eski = sitebul.groq_client, sitebul.config, sitebul.logger
+    try:
+        llm_kota_sifirla()
+        sitebul.groq_client = _SahteGroqCevap(
+            '```json\n{"domain": "www.medema.com.tr"}\n```'
+        )
+        sitebul.config = {
+            "llm": {
+                "model": "openai/gpt-oss-120b",
+                "temperature": 0.3,
+                "max_tokens": 512,
+            }
+        }
+        sitebul.logger = None
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) == "https://medema.com.tr/"
+    finally:
+        sitebul.groq_client, sitebul.config, sitebul.logger = eski
+
+
+def test_llm_domain_sec_metin_fallback_ve_kisa_tuzak():
+    import sitebul
+
+    eski = sitebul.groq_client, sitebul.config, sitebul.logger
+    try:
+        llm_kota_sifirla()
+        sitebul.config = {
+            "llm": {
+                "model": "openai/gpt-oss-120b",
+                "temperature": 0.3,
+                "max_tokens": 512,
+            }
+        }
+        sitebul.logger = None
+        sitebul.groq_client = _SahteGroqCevap(
+            "medema.com.tr çünkü başlıkta marka geçiyor"
+        )
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) == "https://medema.com.tr/"
+
+        sitebul.groq_client = _SahteGroqCevap("TR")
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) is None
+
+        sitebul.groq_client = _SahteGroqCevap("NONE")
+        assert sitebul.llm_domain_sec("MEDEMA İNŞAAT", _ADAYLAR) is None
+    finally:
+        sitebul.groq_client, sitebul.config, sitebul.logger = eski

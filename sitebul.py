@@ -1,4 +1,5 @@
 import argparse
+import json
 import pandas as pd
 import time
 import random
@@ -27,6 +28,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import StaleElementReferenceException
 
 from utils import load_config, setup_logging, normalize_tr, sonuclari_diske_yaz, final_kaydet
+from utils import google_serp_secicileri
 from utils import dolu_hucre_sayisi
 from utils import girdi_sirasina_diz, normalize_columns, COL_SICIL, COL_UNVAN, COL_WEB, COL_SKOR, COL_ILCE
 from utils import COL_KAYNAK_SATIR, kaynak_satir_anahtari, islenmis_kaynak_satirlari
@@ -75,6 +77,7 @@ from utils import (
     groq_chat_metin,
     llm_kota_sifirla,
     unvan_faaliyet_kelimeleri,
+    _llm_json_nesne,
 )
 
 # .env dosyasını yükle (GROQ_API_KEY buradan okunur)
@@ -97,14 +100,13 @@ HREF_TOPLA_JS = (
 )
 
 # Google SERP organik sonuçlarından title + snippet (LLM bağlamı).
-# Sınıf adları değişebilir; birden fazla seçici + h3/a yapısı kullanılır.
-SERP_META_JS = r"""
+# Kart/snippet CSS seçicileri config.yaml → google.selectors (sınıf adları
+# sık değişir; kodu değil YAML'ı güncelle). h3/a yapısı sabit kalır.
+_SERP_META_JS_SABLON = r"""
 return (() => {
   const seen = new Set();
   const out = [];
-  const cards = document.querySelectorAll(
-    'div.tF2Cxc, div.g, div[data-sokoban-container], div.MjjYud > div'
-  );
+  const cards = document.querySelectorAll(__CARDS__);
   for (const card of cards) {
     const h3 = card.querySelector('h3');
     if (!h3) continue;
@@ -127,9 +129,7 @@ return (() => {
     if (host.startsWith('www.')) host = host.slice(4);
     if (seen.has(host)) continue;
     seen.add(host);
-    const snEl = card.querySelector(
-      'div.VwiC3b, div[data-sncf], div.IsZvec, span.st, div[data-content-feature="1"], .MUxGbd'
-    );
+    const snEl = card.querySelector(__SNIPPET__);
     const title = (h3.innerText || '').trim().slice(0, 200);
     const snippet = (snEl ? snEl.innerText : '').trim().slice(0, 280);
     if (!title && !snippet) continue;
@@ -139,6 +139,15 @@ return (() => {
 })();
 """
 
+
+def _serp_meta_js(cards: str, snippet: str) -> str:
+    """Seçicileri JSON string olarak JS'ye gömer (tırnak kaçışı güvenli)."""
+    return (
+        _SERP_META_JS_SABLON
+        .replace("__CARDS__", json.dumps(cards))
+        .replace("__SNIPPET__", json.dumps(snippet))
+    )
+
 CAPTCHA_ISARETLERI = [
     "sıra dışı trafik",
     "sira disi trafik",
@@ -146,8 +155,10 @@ CAPTCHA_ISARETLERI = [
     "our systems have detected",
     "bir robot değil",
     "robot olmadığınızı",
-    "recaptcha",
+    "verify you're not a robot",
+    "before you continue to google",
 ]
+# NOT: "recaptcha" tek başına sayılmaz — normal SERP HTML'inde de geçer.
 
 # ---------------------------------------------------------------------------
 # Functions
@@ -459,7 +470,8 @@ def google_serp_meta_topla(driver) -> dict[str, dict]:
     """
     meta: dict[str, dict] = {}
     try:
-        rows = driver.execute_script(SERP_META_JS) or []
+        sec = google_serp_secicileri(config)
+        rows = driver.execute_script(_serp_meta_js(sec["cards"], sec["snippet"])) or []
     except Exception as e:
         if logger:
             logger.warning(f"  SERP title/snippet okunamadı: {e}")
@@ -501,6 +513,37 @@ def _serp_meta_esle(domain: str, serp_meta: dict[str, dict] | None) -> dict:
     return {}
 
 
+_LLM_BOS_DOMAIN = frozenset({"", "null", "none", "nil", "yok"})
+
+
+def _adaylardan_url(secilen: str, adaylar) -> str | None:
+    """LLM domain'i aday listesindeyse (www'suz, küçük harf) URL'sini döndürür."""
+    hedef = _domain_kok(secilen)
+    if not hedef:
+        return None
+    for _, url, domain in adaylar:
+        if _domain_kok(domain) == hedef or _domain_kok(url) == hedef:
+            return url
+    return None
+
+
+def _llm_domain_metinden(ham: str, adaylar) -> str | None:
+    """JSON yoksa: aday domain cevapta geçiyorsa al. Kısa parçanın domain'e
+    gömülmesi (`cevap in domain`) kullanılmaz — 'TR' ≠ ornek.com.tr.
+    """
+    cevap = (ham or "").strip()
+    if not cevap:
+        return None
+    ust = cevap.upper()
+    if ust in ("NONE", "NULL", "YOK") or ust.rstrip(".") == "NONE":
+        return None
+    for _, url, domain in adaylar:
+        kok = _domain_kok(domain)
+        if kok and kok.upper() in ust:
+            return url
+    return None
+
+
 def llm_domain_sec(firma_adi, adaylar, ilce="", serp_meta=None):
     """Groq LLM ile en uygun domain'i seçer (Google title/snippet ile)."""
     if not groq_client:
@@ -535,16 +578,17 @@ Kurallar:
 - "rehber", "firma listesi", "iletişim bilgileri", "şikayet" içeren sonuçları ele
 - Ünvan inşaat/yapı/emlak ise vakıf, yatırım, holding, banka, üniversite sitelerini SEÇME
 - Marka adı domain'de geçmeli veya çok benzer olmalı
-- Kısa kısaltma (3 harf) ise çok dikkatli ol; emin değilsen NONE
+- Kısa kısaltma (3 harf) ise çok dikkatli ol; emin değilsen domain null olsun
 - İlçe verildiyse, o bölgedeki firmayı tercih et (aynı isimli zincir/şube varsa)
 - Türkçe karakterler (ş, ı, ğ vb.) İngilizce karşılıklarına (s, i, g) dönüşebilir
 - Genel kelimeler (inşaat, ticaret, ltd) domain'de olmayabilir
+- domain değeri yukarıdaki adaylardan BİRİ olmalı; listede yoksa null yaz
 
-Cevap formatı:
-Eğer güvenilir bir eşleşme varsa: SEÇİLEN_DOMAIN
-Eğer güvenilir eşleşme yoksa: NONE
-
-Cevap:"""
+Cevap formatı (sadece JSON, başka metin yazma):
+{{"domain": "secilen.com.tr"}}
+veya güvenilir eşleşme yoksa:
+{{"domain": null}}
+"""
 
     try:
         ham = groq_chat_metin(
@@ -555,16 +599,23 @@ Cevap:"""
             max_tokens=config["llm"]["max_tokens"],
             logger=logger,
         )
-        cevap = ham.strip().upper()
-
-        if cevap == "NONE":
+        nesne = _llm_json_nesne(ham)
+        if nesne is not None and "domain" in nesne:
+            ham_domain = nesne.get("domain")
+            if ham_domain is None:
+                return None
+            if isinstance(ham_domain, str) and ham_domain.strip().lower() in _LLM_BOS_DOMAIN:
+                return None
+            if not isinstance(ham_domain, str):
+                return None
+            url = _adaylardan_url(ham_domain, adaylar)
+            if url:
+                return url
+            if logger:
+                logger.warning(f"  LLM domain aday listesinde yok: {ham_domain}")
             return None
 
-        for _, url, domain in adaylar:
-            if domain.upper() in cevap or cevap in domain.upper():
-                return url
-
-        return None
+        return _llm_domain_metinden(ham, adaylar)
 
     except LLMErisilemedi:
         # Kota/erişim sorunu "eşleşme yok" DEĞİLDİR; çağıran karar veremediğini
@@ -871,11 +922,45 @@ def chrome_kurtar(driver, cfg, *, bagimsiz=False):
     return driver_baslat(cfg, debug_dene=not bagimsiz)
 
 
-def captcha_var_mi(driver):
-    """Google doğrulama (captcha) sayfası mı gösteriliyor?"""
+def _google_sonuc_sayfasi_mi(driver) -> bool:
+    """Açık sekme organik arama sonuç sayfası mı? (CAPTCHA değil)"""
     try:
-        if "/sorry/" in driver.current_url.lower():
+        url = driver.current_url.lower()
+    except Exception:
+        return False
+    if "/sorry/" in url:
+        return False
+    if "/search" not in url or "google." not in url:
+        return False
+    try:
+        n = driver.execute_script(
+            "return document.querySelectorAll("
+            "'div.tF2Cxc h3, div.g h3, div.MjjYud h3, a[href^=\"http\"] h3'"
+            ").length;"
+        )
+        return bool(n and int(n) > 0)
+    except Exception:
+        pass
+    try:
+        kaynak = driver.page_source.lower()
+    except Exception:
+        return False
+    # JS çalışmazsa: dış link + başlık yapısı
+    return "<h3" in kaynak and 'href="http' in kaynak
+
+
+def captcha_var_mi(driver):
+    """Google doğrulama (captcha) sayfası mı gösteriliyor?
+
+    Normal SERP'te recaptcha script'i de yüklenir; yalnızca gerçek uyarı
+    metinleri veya /sorry/ URL'si CAPTCHA sayılır. Sonuçlar görünüyorsa False.
+    """
+    try:
+        url = driver.current_url.lower()
+        if "/sorry/" in url:
             return True
+        if _google_sonuc_sayfasi_mi(driver):
+            return False
         kaynak = driver.page_source.lower()
     except Exception as e:
         if _oturum_dustu_mu(e):

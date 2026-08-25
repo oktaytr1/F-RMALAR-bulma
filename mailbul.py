@@ -9,7 +9,7 @@ import random
 import os
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from utils import load_config, setup_logging, sonuclari_diske_yaz, final_kaydet
 from utils import girdi_sirasina_diz, normalize_columns, COL_SICIL, COL_UNVAN, COL_WEB, COL_EMAIL
@@ -260,11 +260,53 @@ OUTPUT_MAIL_FILE = None
 MAX_ILETISIM_SAYFASI = None
 MAX_SITEMAP_SAYFA = None
 MAIL_TIMEOUT = None
+MAIL_MAX_FIRMA_SANIYE = 20
 MAIL_RETRIES = None
 MIN_MAIL_BEKLEME = None
 MAX_MAIL_BEKLEME = None
 
 ARA_KAYIT_ADIMI = 10
+
+
+def _deadline_kur():
+    tavan = float(MAIL_MAX_FIRMA_SANIYE or 20)
+    _thread_local.deadline = time.monotonic() + max(1.0, tavan)
+
+
+def _deadline_temizle():
+    _thread_local.deadline = None
+
+
+def _sure_doldu_mu() -> bool:
+    dl = getattr(_thread_local, "deadline", None)
+    return dl is not None and time.monotonic() >= dl
+
+
+def _http_timeout(varsayilan=None) -> float:
+    """Kalan firma süresi HTTP timeout'unu kısaltır; süre bittiyle 0.2 sn."""
+    t = float(varsayilan if varsayilan is not None else (MAIL_TIMEOUT or 8))
+    dl = getattr(_thread_local, "deadline", None)
+    if dl is None:
+        return t
+    kalan = dl - time.monotonic()
+    if kalan <= 0:
+        return 0.2
+    return min(t, max(0.2, kalan))
+
+
+def _kalan_uyku(saniye) -> float:
+    """Sayfa arası beklemeyi firma tavanının dışına taşımaz."""
+    saniye = float(saniye or 0)
+    if saniye <= 0:
+        return 0.0
+    dl = getattr(_thread_local, "deadline", None)
+    if dl is None:
+        return saniye
+    kalan = dl - time.monotonic()
+    if kalan <= 0:
+        return 0.0
+    return min(saniye, kalan)
+
 
 # ---------------------------------------------------------------------------
 # Yardımcı fonksiyonlar
@@ -459,8 +501,12 @@ def safe_get(url, timeout=None, retries=None):
     bile en fazla 2 MB parça parça okunur. ``response.content`` kullanılmaz;
     o özellik yanıtın tamamını belleğe indirir.
     """
+    if _sure_doldu_mu():
+        return None
     if timeout is None:
-        timeout = MAIL_TIMEOUT
+        timeout = _http_timeout()
+    else:
+        timeout = _http_timeout(timeout)
     MAX_CONTENT_BYTES = 2 * 1024 * 1024  # 2 MB
     try:
         response = get_session().get(
@@ -484,6 +530,9 @@ def safe_get(url, timeout=None, retries=None):
         indirilen = 0
         parcalar = []
         for parca in response.iter_content(chunk_size=64 * 1024):
+            if _sure_doldu_mu():
+                response.close()
+                return None
             if not parca:
                 continue
             indirilen += len(parca)
@@ -563,6 +612,8 @@ def sayfa_tara(url, mailler, ziyaret_edilen):
 
     Döner: (iletisim_linkleri, ok) — ok=True yalnızca HTTP 200 alındığında.
     """
+    if _sure_doldu_mu():
+        return [], False
     if url in ziyaret_edilen:
         return [], False
     ziyaret_edilen.add(url)
@@ -618,6 +669,8 @@ def sayfa_tara(url, mailler, ziyaret_edilen):
 
 def sitemap_tara(base_url, mailler):
     """sitemap.xml'i tarar, iletişim sayfalarını bulur."""
+    if _sure_doldu_mu():
+        return []
     sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
     response = safe_get(sitemap_url, timeout=8)
     if not response or response.status_code != 200:
@@ -647,7 +700,11 @@ def mail_bul(site, firma_adi=""):
     ziyaret_edilen = set()
     calisan_base_url = None  # sitemap için güvenli base URL
 
+    atlandi = False
     for url in url_denemeleri(site):
+        if _sure_doldu_mu():
+            atlandi = True
+            break
         logger.info(f"  🔍 {url}")
         iletisim_linkleri, ok = sayfa_tara(url, mailler, ziyaret_edilen)
         if not ok:
@@ -659,28 +716,43 @@ def mail_bul(site, firma_adi=""):
 
         # Ana sayfa açıldı — iletişim sayfalarını mail olsun olmasın tara
         for link in iletisim_linkleri[:MAX_ILETISIM_SAYFASI]:
+            if _sure_doldu_mu():
+                atlandi = True
+                break
             logger.info(f"    📄 {link}")
             sayfa_tara(link, mailler, ziyaret_edilen)
-            time.sleep(random.uniform(MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME))
+            uyku = _kalan_uyku(random.uniform(MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME))
+            if uyku:
+                time.sleep(uyku)
 
         # Çalışan ana sayfa bulundu; diğer http/https/www varyasyonlarına gerek yok
         break
 
     # Sitemap iletişim sayfaları: ana sayfada mail olsa bile dene
     # (footer'daki 3+ gürültü regex eşleşmesi gerçek info@'yi engellemesin)
-    if calisan_base_url:
+    if calisan_base_url and not _sure_doldu_mu():
         try:
             sitemap_urls = sitemap_tara(calisan_base_url, mailler)
             for sm_url in sitemap_urls:
+                if _sure_doldu_mu():
+                    atlandi = True
+                    break
                 if not tarama_url_gecerli_mi(sm_url):
                     continue
                 if sm_url in ziyaret_edilen:
                     continue
                 logger.info(f"    🗺 {sm_url}")
                 sayfa_tara(sm_url, mailler, ziyaret_edilen)
-                time.sleep(random.uniform(MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME))
+                uyku = _kalan_uyku(random.uniform(MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME))
+                if uyku:
+                    time.sleep(uyku)
         except Exception:
             pass
+    elif _sure_doldu_mu():
+        atlandi = True
+
+    if atlandi or _sure_doldu_mu():
+        logger.warning(f"  ⏱ yavaş site atlandı (süre doldu): {site}")
 
     return list(mailler)
 
@@ -700,6 +772,7 @@ def firma_isle(gorev):
     else:
         logger.info(f"  📧 {firma}")
         aday_mail = ""
+        _deadline_kur()
         try:
             # Aynı site tekrarında yeniden tarama. Cache HAM mail listesini
             # tutar; seçim ünvana bağlı olduğu için (marka eşleşmesi) her
@@ -715,10 +788,9 @@ def firma_isle(gorev):
                 bulunan_mailler = list(cached)
                 logger.info(f"  ↪ cache: {len(bulunan_mailler)} aday")
             elif cached is _PROCESSING:
-                # Başka thread taratıyor — sonucu bekle
-                import time as _time
-                for _ in range(600):  # max 5 dk
-                    _time.sleep(0.5)
+                # Başka thread taratıyor — firma tavanı dolana kadar bekle
+                while not _sure_doldu_mu():
+                    time.sleep(0.2)
                     with _site_cache_lock:
                         cached = _site_email_cache.get(site)
                     if cached is not _PROCESSING:
@@ -747,6 +819,8 @@ def firma_isle(gorev):
             bulunan_mailler = []
             secilen_mail = ""
             aday_mail = ""
+        finally:
+            _deadline_temizle()
 
         if secilen_mail:
             logger.info(f"  ✔ {secilen_mail}  ({len(bulunan_mailler)} aday)")
@@ -795,7 +869,7 @@ def islenmis_firmalari_yukle(df_girdi, sicil_var):
 def main():
     global config, logger, WORKERS
     global INPUT_WEB_FILE, OUTPUT_MAIL_FILE, MAX_ILETISIM_SAYFASI, MAX_SITEMAP_SAYFA
-    global MAIL_TIMEOUT, MAIL_RETRIES, MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME
+    global MAIL_TIMEOUT, MAIL_MAX_FIRMA_SANIYE, MAIL_RETRIES, MIN_MAIL_BEKLEME, MAX_MAIL_BEKLEME
     global _site_email_cache, _site_cache_lock
     global ARA_KAYIT_ADIMI
 
@@ -827,6 +901,7 @@ def main():
     MAX_ILETISIM_SAYFASI = config["mail"]["max_iletisim_sayfasi"]
     MAX_SITEMAP_SAYFA = config["mail"]["max_sitemap_sayfa"]
     MAIL_TIMEOUT = config["mail"]["timeout"]
+    MAIL_MAX_FIRMA_SANIYE = float(config["mail"].get("max_firma_saniye", 20))
     MAIL_RETRIES = config["mail"]["retries"]
     MIN_MAIL_BEKLEME = config["bekleme"]["min_mail"]
     MAX_MAIL_BEKLEME = config["bekleme"]["max_mail"]
@@ -891,7 +966,10 @@ def main():
         ekstra = {c: satir[c] for c in TASINACAK}
         gorevler.append((firma, site, sicil, kaynak_satir, ekstra))
 
-    logger.info(f"  ⚡ {len(gorevler)} satır, {WORKERS} paralel işçi ile taranacak.")
+    logger.info(
+        f"  ⚡ {len(gorevler)} satır, {WORKERS} paralel işçi "
+        f"(firma tavanı {MAIL_MAX_FIRMA_SANIYE:.0f} sn)."
+    )
 
     sonuclar = []
     executor = ThreadPoolExecutor(max_workers=WORKERS)
@@ -900,12 +978,17 @@ def main():
     biten = 0
 
     try:
-        # executor.map sonuçları GİRDİ SIRASINDA döndürür; böylece hem Excel
-        # sırası korunur hem de diske yazılanlar hep bir "önek" olur (resume güvenli).
-        sonuc_akisi = executor.map(firma_isle, gorevler)
-
-        for kayit in tqdm(sonuc_akisi, total=len(gorevler),
-                          desc="Email'ler taranıyor", unit="firma"):
+        # as_completed: yavaş bir site diğer biten firmaların ilerlemeyi
+        # güncellemesini engellemez. Resume kaynak_satır anahtarıyla çalışır;
+        # ara kayıt sırası önemli değil, final_kaydet girdiyi yeniden dizer.
+        gelecekler = [executor.submit(firma_isle, g) for g in gorevler]
+        for gelecek in tqdm(
+            as_completed(gelecekler),
+            total=len(gorevler),
+            desc="Email'ler taranıyor",
+            unit="firma",
+        ):
+            kayit = gelecek.result()
             sonuclar.append(kayit)
             biten += 1
             unvan = ""
