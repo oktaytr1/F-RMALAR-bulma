@@ -1485,10 +1485,37 @@ def domain_cekirdek(netloc: str) -> str:
     )
 
 
+# Domain'e yapışık hukuki ekler (uzun → kısa). uscoltd → usco + ltd.
+# "as"/"san"/"tic" bilinçli yok: atlas, nissan, plastic yanlış bölünmesin.
+_DOMAIN_HUKUKI_EKLER = (
+    "limited",
+    "sirketi",
+    "ltd",
+    "sti",
+)
+
+
+def _hukuki_ek_ayir(parca: str) -> list[str]:
+    """Yapışık hukuki eki ayırır. uscoltd → ['usco', 'ltd']; medema → ['medema']."""
+    if not parca:
+        return []
+    for ek in _DOMAIN_HUKUKI_EKLER:
+        if len(parca) <= len(ek):
+            continue
+        if not parca.endswith(ek):
+            continue
+        kok = parca[: -len(ek)]
+        # Çok kısa kök yanlış pozitif (ör. xltd); en az 3 harf marka
+        if len(kok) >= 3 and kok.isalnum():
+            return [kok, ek]
+    return [parca]
+
+
 def domain_marka_etiketleri(netloc: str) -> list[str]:
     """www / TLD hariç domain etiketleri; tire vb. ile de bölünür.
 
     www.afy-insaat.com.tr → ['afy', 'insaat']
+    uscoltd.com.tr → ['usco', 'ltd']  (yapışık hukuki ek)
     tevfikileriihl.meb.k12.tr → ['tevfikileriihl', 'meb', 'k12']
     """
     d = (netloc or "").lower().strip()
@@ -1500,7 +1527,7 @@ def domain_marka_etiketleri(netloc: str) -> list[str]:
             continue
         for parca in re.split(r"[^a-z0-9]+", p):
             if parca:
-                etiketler.append(parca)
+                etiketler.extend(_hukuki_ek_ayir(parca))
     return etiketler
 
 

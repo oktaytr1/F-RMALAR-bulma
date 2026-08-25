@@ -35,6 +35,26 @@ def test_domain_marka_etiketleri():
     assert domain_marka_etiketleri("") == []
 
 
+def test_yapiskik_hukuki_ek_ayrilir():
+    """uscoltd → usco + ltd; tireli olan zaten ayrıydı."""
+    assert domain_marka_etiketleri("uscoltd.com.tr") == ["usco", "ltd"]
+    assert domain_marka_etiketleri("usco-ltd.com.tr") == ["usco", "ltd"]
+    assert domain_marka_etiketleri("medemasti.com") == ["medema", "sti"]
+    assert domain_marka_etiketleri("erturkltd.com.tr") == ["erturk", "ltd"]
+    # Hukuki ek yoksa dokunma
+    assert domain_marka_etiketleri("medema.com.tr") == ["medema"]
+    # atlas yanlış bölünmesin (as ek listesinde yok)
+    assert domain_marka_etiketleri("atlas.com.tr") == ["atlas"]
+
+
+def test_usco_uscoltd_skor():
+    """USCO ENDÜSTRİYEL ↔ uscoltd.com.tr artık RED_SKOR olmamalı."""
+    unvan = "USCO ENDÜSTRİYEL ÇÖZÜMLER"
+    assert benzerlik_skoru(unvan, "uscoltd.com.tr") >= 65
+    assert benzerlik_skoru(unvan, "usco-ltd.com.tr") >= 65
+    assert hizli_domain_kontrol(unvan, "uscoltd.com.tr") is True
+
+
 def test_domain_tld_cezasi():
     assert domain_tld_cezasi("test.store") == 30
     assert domain_tld_cezasi("test.com.tr") == 0
