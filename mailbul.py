@@ -3,7 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import pandas as pd
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 import time
 import random
 import os
@@ -344,12 +344,32 @@ RED_LOCAL_TAM = frozenset(
 RED_ALT_DIZGE = tuple(x for x in RED if x not in {f"{y}@" for y in RED_LOCAL_TAM})
 
 
+def mail_normalize(mail: str) -> str:
+    """mailto / HTML'den gelen URL-encode ve boşlukları temizle.
+
+    Örn. '%20almin@alminprofil.com.tr' → 'almin@alminprofil.com.tr'
+    """
+    if not mail:
+        return ""
+    # Birkaç tur: %2520 gibi çift encode nadir; 2 yeterli
+    s = str(mail).strip()
+    for _ in range(2):
+        cozulmus = unquote(s)
+        if cozulmus == s:
+            break
+        s = cozulmus
+    return s.strip().strip("<>\"'").strip()
+
+
 def temizle(mailler):
     """Mailleri temizle: küçült, reddet, tekrarları ele."""
     sonuc = []
     for mail in mailler:
-        mail = mail.lower().strip().rstrip(".")
+        mail = mail_normalize(mail).lower().rstrip(".")
         if not EMAIL_REGEX.match(mail):
+            continue
+        # Encode artığı veya boşluk kaldıysa geçersiz
+        if "%" in mail or " " in mail:
             continue
         if any(mail.endswith(ext) for ext in ASSET_EMAIL_EXT):
             continue
@@ -641,7 +661,7 @@ def sayfa_tara(url, mailler, ziyaret_edilen):
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if href.startswith("mailto:"):
-            mail = href.replace("mailto:", "").split("?")[0].strip()
+            mail = mail_normalize(href.replace("mailto:", "").split("?")[0])
             if mail:
                 mailler.add(mail)
 

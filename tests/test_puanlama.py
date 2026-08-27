@@ -55,6 +55,36 @@ def test_usco_uscoltd_skor():
     assert hizli_domain_kontrol(unvan, "uscoltd.com.tr") is True
 
 
+def test_yapiskik_sektor_ek_ayrilir():
+    """modelambalaj → model + ambalaj; temaofset → tema + ofset."""
+    assert domain_marka_etiketleri("modelambalaj.com.tr") == ["model", "ambalaj"]
+    assert domain_marka_etiketleri("ozenambalaj.com") == ["ozen", "ambalaj"]
+    assert domain_marka_etiketleri("camisambalaj.com.tr") == ["camis", "ambalaj"]
+    assert domain_marka_etiketleri("temaofset.com") == ["tema", "ofset"]
+    assert domain_marka_etiketleri("iskainsaat.com") == ["iska", "insaat"]
+    assert domain_marka_etiketleri("dnckimya.com") == ["dnc", "kimya"]
+    assert domain_marka_etiketleri("ikizlerotomotiv.com") == ["ikizler", "otomotiv"]
+    assert domain_marka_etiketleri("koclarmetal.com") == ["koclar", "metal"]
+    assert domain_marka_etiketleri("ayescelik.com") == ["ayes", "celik"]
+    # Kısa kök sektörle bölünmesin
+    assert domain_marka_etiketleri("abcyapi.com") == ["abcyapi"]
+
+
+def test_yapiskik_sektor_skor_ambalaj_ofset():
+    assert benzerlik_skoru(
+        "MODEL AMBALAJ ÜRÜNLERİ SANAYİ VE TİCARET A.Ş.",
+        "www.modelambalaj.com.tr",
+    ) >= 65
+    assert benzerlik_skoru("ÖZEN KUTU AMBALAJ", "ozenambalaj.com") >= 65
+    assert benzerlik_skoru("CAMİŞ AMBALAJ SANAYİ", "camisambalaj.com.tr") >= 65
+    assert benzerlik_skoru("DNC KİMYA LTD", "dnckimya.com") >= 65
+    assert benzerlik_skoru("İKİZLER OTOMOTİV LTD", "ikizlerotomotiv.com") >= 65
+    assert hizli_domain_kontrol(
+        "MODEL AMBALAJ ÜRÜNLERİ SANAYİ", "modelambalaj.com.tr"
+    ) is True
+    assert hizli_domain_kontrol("CAMİŞ AMBALAJ", "camisambalaj.com.tr") is True
+
+
 def test_domain_tld_cezasi():
     assert domain_tld_cezasi("test.store") == 30
     assert domain_tld_cezasi("test.com.tr") == 0

@@ -9,6 +9,8 @@ from utils import (
     zayif_tek_marka_tokeni,
     kisa_marka_mi,
     unvan_faaliyet_kelimeleri,
+    sorgu_zayif_mi,
+    sorgu_parca_kurtar,
 )
 from sitebul import arama_sorgusu
 
@@ -82,6 +84,60 @@ def test_arama_sorgusu_sanayi_yok():
     assert "TİCARET" not in q
 
 
+def test_arama_sorgusu_marmara_global_kagit():
+    """Coğrafya/global skorlamada genel; sorguda marka kalmalı."""
+    unvan = "MARMARA GLOBAL KAĞIT İTHALAT VE İHRACAT SANAYİ LİMİTED ŞİRKETİ"
+    assert arama_sorgusu(unvan, ilce="ATAŞEHİR") == (
+        "MARMARA GLOBAL KAĞIT resmi site ATAŞEHİR"
+    )
+    # Domain skoru hâlâ yalnız ayırt edici token (marmara/global genel)
+    assert marka_tokenlari(unvan) == ["kagit"]
+    assert "KAĞIT resmi site" != arama_sorgusu(unvan, ilce="ATAŞEHİR")
+
+
+def test_sorgu_zayif_mi():
+    assert sorgu_zayif_mi([]) is True
+    assert sorgu_zayif_mi(["KAĞIT"]) is True  # ≤5 harf
+    assert sorgu_zayif_mi(["ENERJİ"]) is True  # sektör/genel
+    assert sorgu_zayif_mi(["MARMARA", "GLOBAL", "KAĞIT"]) is False
+    assert sorgu_zayif_mi(["SAK", "İNŞAAT"]) is False
+
+
+def test_sorgu_parca_kurtar_tek_kagit():
+    """İstisna olmasa bile tek KAĞIT → baştaki marka geri gelir."""
+    unvan = "MARMARA GLOBAL KAĞIT İTHALAT VE İHRACAT SANAYİ LİMİTED ŞİRKETİ"
+    assert sorgu_parca_kurtar(unvan, ["KAĞIT"]) == [
+        "MARMARA",
+        "GLOBAL",
+        "KAĞIT",
+    ]
+
+
+def test_sorgu_parca_kurtar_grup_holding_enerji():
+    """grup/holding ilk adımda yasak; fallback ile sorgu güçlenir."""
+    unvan = "GRUP HOLDING ENERJİ SANAYİ LİMİTED ŞİRKETİ"
+    # Ham parça yalnız faaliyet
+    kurtar = sorgu_parca_kurtar(unvan, ["ENERJİ"])
+    assert "ENERJİ" in kurtar
+    assert len(kurtar) >= 2
+    q = arama_sorgusu(unvan)
+    assert q != "ENERJİ resmi site"
+    assert "resmi site" in q
+
+
+def test_sorgu_parca_kurtar_alfa_enerji():
+    unvan = "ALFA GRUP ENERJİ LİMİTED ŞİRKETİ"
+    assert sorgu_parca_kurtar(unvan, ["ENERJİ"]) == ["ALFA", "ENERJİ"]
+    assert arama_sorgusu(unvan) == "ALFA ENERJİ resmi site"
+
+
+def test_arama_sorgusu_sak_grup_bozulmaz():
+    """Kurtarma SAK GRUP davranışını bozmamalı."""
+    assert arama_sorgusu("SAK GRUP İNŞAAT LİMİTED ŞİRKETİ") == (
+        "SAK İNŞAAT resmi site"
+    )
+
+
 def test_arama_sorgusu_ilce():
     assert arama_sorgusu("ENSAR MİMARLIK LTD", ilce="Kadıköy") == (
         "ENSAR MİMARLIK resmi site Kadıköy"
@@ -124,3 +180,24 @@ def test_faaliyet_reklam_kargo_makine():
     assert arama_sorgusu("STAR GÜVENLİK LTD") == "STAR GÜVENLİK resmi site"
     assert arama_sorgusu("ORHAN AHŞAP LTD") == "ORHAN AHŞAP resmi site"
     assert arama_sorgusu("DEMİR MAKİNE LTD") == "DEMİR MAKİNE resmi site"
+
+
+def test_arama_sorgusu_tekrar_ve_kumlama_boya():
+    """ALPER ŞANLI ŞANLI KUMLAMA VE BOYA — tekrar düşer, faaliyet sorguya girer."""
+    unvan = "ALPER ŞANLI ŞANLI KUMLAMA VE BOYA"
+    assert marka_tokenlari(unvan) == ["alper", "sanli"]
+    assert unvan_faaliyet_kelimeleri(unvan) == ["KUMLAMA", "BOYA"]
+    # Sorgu en fazla 3 ayırt edici kelime (hedef); BOYA 4. sırada kesilir.
+    assert arama_sorgusu(unvan, ilce="Kahramankazan") == (
+        "ALPER ŞANLI KUMLAMA resmi site Kahramankazan"
+    )
+    assert "ŞANLI ŞANLI" not in arama_sorgusu(unvan)
+
+
+def test_github_io_ignore():
+    from utils import ignore_edilmeli
+
+    assert ignore_edilmeli(
+        "https://alpersanli.github.io/", "alpersanli.github.io"
+    ) is True
+    assert ignore_edilmeli("https://github.com/x/y", "github.com") is True

@@ -433,8 +433,9 @@ GENEL_KELIMELER = {
     "nakliyat", "nakliye", "lojistik", "tasimacilik", "kargo",
     "medikal", "tibbi", "plastik", "ambalaj", "paketleme",
     "mobilya", "dekor", "ahsap", "metal", "celik",
-    "reklamcilik", "reklam", "matbaa", "ajans",
+    "reklamcilik", "reklam", "matbaa", "matbaacilik", "ajans",
     "temizlik", "guvenlik", "cevre", "peyzaj",
+    "kumlama", "boya", "boyama",
     "market", "magaza", "perakende", "toptan",
     "otel", "pansiyon", "restoran", "restaurant", "lokanta",
     "bilgisayar", "yazilim", "teknoloji", "iletisim", "telekomunikasyon",
@@ -444,6 +445,58 @@ GENEL_KELIMELER = {
     "bati", "dogu", "kuzey", "guney", "marmara", "anadolu", "trakya",
     # Ek sektör kelimeleri
     "mekanik", "madencilik", "maden", "hafriyat", "mermer",
+}
+
+# Domain skorunda genel sayılır; Google sorgusunda marka olabilir.
+# MARMARA GLOBAL KAĞIT → "KAĞIT resmi site" olmasın diye.
+SORGU_MARKA_ISTISNA = {
+    "marmara",
+    "anadolu",
+    "trakya",
+    "bati",
+    "dogu",
+    "kuzey",
+    "guney",
+    "global",
+    "international",
+    "turkiye",
+    "turkey",
+    "turk",
+}
+
+# Zayıf sorgu kurtarmasında geri konmaz (hukuki / evrak / kurumsal kabuk).
+# grup/holding bilinçli: SAK GRUP → SAK İNŞAAT kalsın.
+SORGU_KURTARMA_YASAK = {
+    "limited",
+    "ltd",
+    "sirketi",
+    "sirket",
+    "sti",
+    "anonim",
+    "as",
+    "sanayi",
+    "sanayii",
+    "san",
+    "ticaret",
+    "tic",
+    "ithalat",
+    "ihracat",
+    "dis",
+    "ve",
+    "ile",
+    "sube",
+    "subesi",
+    "branch",
+    "merkez",
+    "genel",
+    "grup",
+    "holding",
+    "group",
+    "company",
+    "corporation",
+    "enterprise",
+    "investment",
+    "yatirim",
 }
 
 # Domain'de TLD sayılan (marka olmayan) etiketler
@@ -467,12 +520,16 @@ def unvan_subeli_mi(unvan: str) -> bool:
 def marka_tokenlari(unvan: str) -> list[str]:
     """Firma ünvanından marka (ayırt edici) kelimeleri çıkarır."""
     tokenlar = []
+    gorulen: set[str] = set()
     for kelime in str(unvan).split():
         norm = normalize_tr(kelime)
         if not norm or len(norm) < 2:
             continue
         if norm in GENEL_KELIMELER:
             continue
+        if norm in gorulen:
+            continue
+        gorulen.add(norm)
         tokenlar.append(norm)
 
     # Tüm kelimeler genel ise ünvanın ilk kelimesini fallback olarak kullan
@@ -814,6 +871,9 @@ _SEKTOR_POZITIF = _SEKTOR_INSAAT_UNVAN | {
     "ahsap",
     "makine",
     "makina",
+    "kumlama",
+    "boya",
+    "boyama",
     "construction",
     "engineering",
     "metal",
@@ -990,6 +1050,99 @@ def unvan_faaliyet_kelimeleri(unvan: str, limit: int = 2) -> list[str]:
         if len(bulunan) >= limit:
             break
     return bulunan
+
+
+def sorgu_zayif_mi(parca: list[str]) -> bool:
+    """Budanmış Google sorgu parçası ayırt edici değil mi?
+
+    Tek jenerik/sektör/kısa kelime (KAĞIT, ENERJİ) veya boş → zayıf.
+    İki ve daha fazla kelime yeterli sayılır.
+    """
+    if not parca:
+        return True
+    if len(parca) >= 2:
+        return False
+    n = normalize_tr(parca[0])
+    if not n:
+        return True
+    if len(n) <= 5:
+        return True
+    if n in GENEL_KELIMELER or n in _SEKTOR_POZITIF:
+        return True
+    return False
+
+
+def sorgu_parca_kurtar(unvan: str, parca: list[str], *, hedef: int = 3) -> list[str]:
+    """Zayıf sorguya ünvan başından ayırt edici kelime geri koyar.
+
+    1) Yasaklı olmayan (ltd/sanayi/grup…) atılmış kelimeleri başa ekle.
+    2) Hâlâ zayıfsa: hukuki ekler hariç ünvanın ilk kelimeleri.
+    """
+    sonuc = list(parca or [])
+    if not sorgu_zayif_mi(sonuc):
+        return sonuc[:hedef]
+
+    kelimeler = [k for k in str(unvan or "").replace(".", " ").split() if k.strip()]
+    mevcut = {normalize_tr(x) for x in sonuc}
+
+    # 1) Baştan yasak listesinde olmayan kelimeleri geri al
+    geri: list[str] = []
+    for kelime in kelimeler:
+        n = normalize_tr(kelime)
+        if not n or len(n) < 2:
+            continue
+        if n in SORGU_KURTARMA_YASAK:
+            continue
+        if n in mevcut:
+            continue
+        # Zaten marka adayında / istisnada olanlar veya genel ama coğrafya
+        geri.append(kelime)
+        mevcut.add(n)
+        if len(geri) >= 2:
+            break
+
+    if geri:
+        sonuc = geri + sonuc
+        # Sıra: ünvan sırasına göre yeniden diz
+        sira = {normalize_tr(k): i for i, k in enumerate(kelimeler)}
+        sonuc.sort(key=lambda k: sira.get(normalize_tr(k), 999))
+        # Tekrarları temizle, sırayı koru
+        temiz: list[str] = []
+        gorulen: set[str] = set()
+        for k in sonuc:
+            n = normalize_tr(k)
+            if n in gorulen:
+                continue
+            gorulen.add(n)
+            temiz.append(k)
+        sonuc = temiz[:hedef]
+
+    if not sorgu_zayif_mi(sonuc):
+        return sonuc
+
+    # 2) Fallback: yalnız hukuki / bağlaç at; grup/holding dahil edilebilir
+    hukuki = {
+        "limited",
+        "ltd",
+        "sirketi",
+        "sirket",
+        "sti",
+        "anonim",
+        "as",
+        "ve",
+        "ile",
+    }
+    fallback: list[str] = []
+    gorulen_f: set[str] = set()
+    for kelime in kelimeler:
+        n = normalize_tr(kelime)
+        if not n or len(n) < 2 or n in hukuki or n in gorulen_f:
+            continue
+        gorulen_f.add(n)
+        fallback.append(kelime)
+        if len(fallback) >= hedef:
+            break
+    return fallback if fallback else sonuc
 
 
 # Kısa / jenerik ilçe adları sektör ikamesi veya "başka ilçe" reddi olmaz.
@@ -1263,6 +1416,9 @@ def title_marka_kompakt_mi(unvan: str, title: str) -> bool:
 
     'ORTASAN' / 'ORTASAN Sanayi' → True. 'Gerber Baby Food' → False.
     'Homes.com: Houses for Sale' → False. HOMES/GERBER çakışmasını keser.
+
+    Çok tokenlı tam marka (ÖZEN KUTU): title'da tüm marka kelimeleri
+    geçiyorsa ürün dolgusu (karton, koli…) kompaktlığı bozmaz.
     """
     tokenlar = marka_tokenlari(unvan)
     if not tokenlar or not (title or "").strip():
@@ -1273,6 +1429,12 @@ def title_marka_kompakt_mi(unvan: str, title: str) -> bool:
     marka_kume = set(tokenlar)
     birlesik = "".join(tokenlar)
     ceviri = {a for t in tokenlar for a in _token_cevirileri(t)}
+
+    # ≥2 ayırt edici token'ın hepsi title'da → marka kanıtı (sektör .com muafiyeti)
+    onemli = [t for t in tokenlar if len(t) >= 3]
+    if len(onemli) >= 2 and all(t in kelimeler for t in onemli):
+        return True
+
     kalan = []
     for k in kelimeler:
         if len(k) <= 2:
@@ -1399,7 +1561,8 @@ def ulke_sektor_uyumlu_mu(
         #
         # TR sinyali şart (direkt kabul): jenerik TLD'de bu muafiyet tek başına
         # HOMES İNŞAAT → homes.com, GERBER YAPI → gerber.com içeri alır.
-        # Title/LLM markayı gördüyse kompakt title yeter (ortasan.com).
+        # Title/LLM markayı gördüyse kompakt title yeter (ortasan.com;
+        # ÖZEN+KUTU title'da → ozenkutu.com). SERP-only hâlâ TR ister.
         # Ters yöndeki çelişki (petshop, vakıf…) sektor_uyumsuz_mu ile ayrıca
         # kontrol edildiği için bu muafiyet o korumayı zayıflatmaz.
         if tr and tam:
@@ -1494,19 +1657,81 @@ _DOMAIN_HUKUKI_EKLER = (
     "sti",
 )
 
+# Domain'e yapışık sektör ekleri. modelambalaj → model + ambalaj.
+# Kısa/çok genel ekler (oto, otel, as) yok — yanlış kök kesmesin.
+_DOMAIN_SEKTOR_EKLER = (
+    "matbaacilik",
+    "kagitcilik",
+    "gayrimenkul",
+    "elektronik",
+    "otomotiv",
+    "paketleme",
+    "muhendislik",
+    "tasimacilik",
+    "teknoloji",
+    "aluminyum",
+    "ambalaj",
+    "nakliyat",
+    "lojistik",
+    "nakliye",
+    "yazilim",
+    "bilisim",
+    "hafriyat",
+    "tekstil",
+    "insaat",
+    "medikal",
+    "plastik",
+    "mobilya",
+    "temizlik",
+    "guvenlik",
+    "mekanik",
+    "elektrik",
+    "offset",
+    "ofset",
+    "matbaa",
+    "kagit",
+    "kargo",
+    "reklam",
+    "enerji",
+    "mermer",
+    "kimya",
+    "metal",
+    "celik",
+    "emlak",
+    "gida",
+    "yapi",
+)
 
-def _hukuki_ek_ayir(parca: str) -> list[str]:
-    """Yapışık hukuki eki ayırır. uscoltd → ['usco', 'ltd']; medema → ['medema']."""
+# Uzun ek önce (matbaacilik > matbaa, kagitcilik > kagit).
+_DOMAIN_YAPISIK_EKLER = tuple(
+    sorted(
+        set(_DOMAIN_HUKUKI_EKLER) | set(_DOMAIN_SEKTOR_EKLER),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _yapiskik_ek_ayir(parca: str) -> list[str]:
+    """Yapışık hukuki/sektör eki ayırır.
+
+    uscoltd → ['usco', 'ltd']
+    modelambalaj → ['model', 'ambalaj']
+    medema → ['medema']
+    """
     if not parca:
         return []
-    for ek in _DOMAIN_HUKUKI_EKLER:
-        if len(parca) <= len(ek):
-            continue
-        if not parca.endswith(ek):
+    for ek in _DOMAIN_YAPISIK_EKLER:
+        if len(parca) <= len(ek) or not parca.endswith(ek):
             continue
         kok = parca[: -len(ek)]
-        # Çok kısa kök yanlış pozitif (ör. xltd); en az 3 harf marka
-        if len(kok) >= 3 and kok.isalnum():
+        # Hukuki / uzun sektör (≥5): ≥3 (usco+ltd, dnc+kimya).
+        # Kısa sektör (yapi, gida): ≥4 — "onyapi" / "isgida" yanlış bölünmesin.
+        if ek in _DOMAIN_HUKUKI_EKLER or len(ek) >= 5:
+            min_kok = 3
+        else:
+            min_kok = 4
+        if len(kok) >= min_kok and kok.isalnum():
             return [kok, ek]
     return [parca]
 
@@ -1515,7 +1740,8 @@ def domain_marka_etiketleri(netloc: str) -> list[str]:
     """www / TLD hariç domain etiketleri; tire vb. ile de bölünür.
 
     www.afy-insaat.com.tr → ['afy', 'insaat']
-    uscoltd.com.tr → ['usco', 'ltd']  (yapışık hukuki ek)
+    uscoltd.com.tr → ['usco', 'ltd']
+    modelambalaj.com.tr → ['model', 'ambalaj']
     tevfikileriihl.meb.k12.tr → ['tevfikileriihl', 'meb', 'k12']
     """
     d = (netloc or "").lower().strip()
@@ -1527,7 +1753,7 @@ def domain_marka_etiketleri(netloc: str) -> list[str]:
             continue
         for parca in re.split(r"[^a-z0-9]+", p):
             if parca:
-                etiketler.extend(_hukuki_ek_ayir(parca))
+                etiketler.extend(_yapiskik_ek_ayir(parca))
     return etiketler
 
 
@@ -1926,6 +2152,7 @@ IGNORE = {
     "quora.com",
     "stackoverflow.com",
     "github.com",
+    "github.io",
     "gitlab.com",
     "blogspot.com",
     "blogger.com",

@@ -723,7 +723,11 @@ def render_progress_bar() -> None:
 
 
 def render_scroll_log(lines: list[str], height: int = 340) -> None:
-    """Sabit yükseklikli kaydırılabilir log; yeni satırlarda alta kayar."""
+    """Sabit yükseklikli log.
+
+    Alta yakınken yeni satırlarla birlikte kayar; kullanıcı yukarı kaydırdıysa
+    konumu korunur (inceleme için). Alta dönünce canlı takip yeniden açılır.
+    """
     text = "\n".join(lines[-200:]) if lines else "Log bekleniyor…"
     safe = html.escape(text)
     components.html(
@@ -744,8 +748,42 @@ def render_scroll_log(lines: list[str], height: int = 340) -> None:
             word-break: break-word;
         ">{safe}</div>
         <script>
-          const el = document.getElementById('firma-log');
-          if (el) {{ el.scrollTop = el.scrollHeight; }}
+          (function () {{
+            const KEY = "firma-log-scroll-v1";
+            const el = document.getElementById("firma-log");
+            if (!el) return;
+
+            function nearBottom() {{
+              return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+            }}
+
+            function save() {{
+              try {{
+                sessionStorage.setItem(KEY, JSON.stringify({{
+                  stick: nearBottom(),
+                  top: el.scrollTop
+                }}));
+              }} catch (e) {{}}
+            }}
+
+            let stick = true;
+            let top = 0;
+            try {{
+              const saved = JSON.parse(sessionStorage.getItem(KEY) || "{{}}");
+              if (typeof saved.stick === "boolean") stick = saved.stick;
+              if (typeof saved.top === "number") top = saved.top;
+            }} catch (e) {{}}
+
+            if (stick) {{
+              el.scrollTop = el.scrollHeight;
+            }} else {{
+              el.scrollTop = Math.min(top, Math.max(0, el.scrollHeight - el.clientHeight));
+            }}
+
+            el.addEventListener("scroll", save, {{ passive: true }});
+            // İçerik boyutu değişince de kaydet (stick güncel kalsın)
+            save();
+          }})();
         </script>
         """,
         height=height + 8,

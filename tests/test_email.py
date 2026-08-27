@@ -25,6 +25,21 @@ def test_email_regex_gecersiz():
     assert not EMAIL_REGEX.match("noatsign")
 
 
+def test_temizle_url_encode_bosluk():
+    """mailto:%20almin@… → almin@…; encode artığı elenir."""
+    from mailbul import mail_normalize
+
+    assert mail_normalize("%20almin@alminprofil.com.tr") == (
+        "almin@alminprofil.com.tr"
+    )
+    assert mail_normalize(" almin@x.com ") == "almin@x.com"
+    sonuc = temizle(["%20almin@alminprofil.com.tr", "info@alminprofil.com.tr"])
+    assert "almin@alminprofil.com.tr" in sonuc
+    assert "%20almin@alminprofil.com.tr" not in sonuc
+    # Çözülemeyen % artığı
+    assert temizle(["al%zzmin@alminprofil.com.tr"]) == []
+
+
 def test_temizle_red_listesi():
     """RED listesindeki kalıplar filtrelenir, info@ geçer."""
     mailler = ["noreply@acmeyapi.com", "info@acmeyapi.com", "admin@acmeyapi.com"]

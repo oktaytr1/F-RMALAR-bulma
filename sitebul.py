@@ -55,6 +55,7 @@ from utils import (
 )
 from utils import (
     GENEL_KELIMELER,
+    SORGU_MARKA_ISTISNA,
     marka_tokenlari,
     benzerlik_skoru,
     ignore_edilmeli,
@@ -77,6 +78,7 @@ from utils import (
     groq_chat_metin,
     llm_kota_sifirla,
     unvan_faaliyet_kelimeleri,
+    sorgu_parca_kurtar,
     _llm_json_nesne,
 )
 
@@ -169,12 +171,22 @@ def arama_sorgusu(firma, ilce=""):
 
     Örn. ENSAR MİMARLIK İNŞAAT SANAYİ LTD → 'ENSAR MİMARLIK İNŞAAT resmi site'.
     sanayi/ticaret sorguya girmez. Domain skoru hâlâ yalnız marka tokenları kullanır.
+
+    Coğrafya / global kelimeleri skorlamada geneldir ama sorguda marka sayılır.
+    Tek jenerik kelime kalırsa (KAĞIT, ENERJİ) ünvan başından kurtarma uygulanır.
     """
     marka_kelimeler = []
+    gorulen_marka: set[str] = set()
     for kelime in firma.split():
         norm = normalize_tr(kelime)
-        if not norm or norm in GENEL_KELIMELER:
+        if not norm:
             continue
+        if norm in GENEL_KELIMELER and norm not in SORGU_MARKA_ISTISNA:
+            continue
+        # ALPER ŞANLI ŞANLI → ALPER ŞANLI (tekrar sorguyu şişirmesin)
+        if norm in gorulen_marka:
+            continue
+        gorulen_marka.add(norm)
         marka_kelimeler.append(kelime)
         if len(marka_kelimeler) >= 3:
             break
@@ -183,7 +195,7 @@ def arama_sorgusu(firma, ilce=""):
     marka_norm = {normalize_tr(x) for x in marka_kelimeler}
     faaliyet = [k for k in faaliyet if normalize_tr(k) not in marka_norm]
 
-    parca = list(marka_kelimeler) + faaliyet
+    parca = sorgu_parca_kurtar(firma, list(marka_kelimeler) + faaliyet)
     if parca:
         sorgu = f"{' '.join(parca)} resmi site"
     else:

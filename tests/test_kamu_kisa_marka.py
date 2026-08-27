@@ -428,6 +428,37 @@ def test_ortasan_kompakt_title_kabul():
     )
 
 
+def test_ozen_kutu_title_marka_sektor_muaf():
+    """Canlı: ÖZEN KUTU → ozenkutu.com skor 100 ama RED_SEKTOR (ambalaj ünvanda).
+
+    Title'da Özen+Kutu varken ürün dolgusu kompaktlığı bozmamalı; sayfa onayı
+    ile sektör şartı kalkar. SERP-only (marka_sayfada yok) hâlâ red.
+    """
+    unvan = (
+        "ÖZEN KUTU AMBALAJ MATBAACILIK SANAYİ VE TİCARET LİMİTED ŞİRKETİ"
+    )
+    assert tam_marka_eslesmesi_mi(unvan, "ozenkutu.com")
+    assert (
+        ulke_sektor_uyumlu_mu(
+            unvan,
+            "ozenkutu.com",
+            title="Özen Kutu | Karton Koli Üreticisi",
+            snippet="",
+            marka_sayfada=True,
+        )
+        is True
+    )
+    assert (
+        ulke_sektor_uyumlu_mu(
+            unvan,
+            "ozenkutu.com",
+            title="Özen Kutu",
+            snippet="",
+        )
+        is False
+    )
+
+
 def test_citgrass_tel_kisa_token_engellemez():
     """Ünvanda TEL (3 harf) var diye citgrass.com elenmemeli."""
     unvan = "ÇİTGRASS TEL VE ÇİT SİSTEMLERİ ÇELİK İNŞAAT ANONİM ŞİRKETİ"
